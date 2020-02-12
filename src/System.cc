@@ -26,6 +26,7 @@
 #include <pangolin/pangolin.h>
 #include <iomanip>
 #include <boost/variant/detail/backup_holder.hpp>
+#include <unistd.h>
 
 namespace ORB_SLAM2
 {
