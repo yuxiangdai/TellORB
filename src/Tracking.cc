@@ -34,6 +34,7 @@
 #include"PnPsolver.h"
 
 #include<iostream>
+#include <unistd.h>
 
 #include<mutex>
 #include <cv_bridge/cv_bridge.h>
