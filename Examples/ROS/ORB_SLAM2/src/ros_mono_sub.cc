@@ -89,7 +89,6 @@ ros::Publisher pub_grid_map, pub_grid_map_metadata;
 ros::Publisher pub_goal;
 ros::Publisher pub_initial_pose, pub_current_pose, pub_current_particles;
 nav_msgs::OccupancyGrid grid_map_msg;
-<<<<<<< HEAD
 Eigen::Matrix4d transform_mat;
 geometry_msgs::PoseWithCovarianceStamped init_pose_stamped, curr_pose_stamped;
 tf::StampedTransform odom_to_map_transform_stamped;
@@ -102,8 +101,6 @@ geometry_msgs::PoseWithCovariance init_pose, curr_pose;
 //std::chrono::monotonic_clock::time_point start_time, end_time;
 //#endif
 //bool got_start_time;
-=======
->>>>>>> master
 
 float kf_pos_x, kf_pos_z;
 int kf_pos_grid_x, kf_pos_grid_z;
@@ -136,7 +133,6 @@ int main(int argc, char **argv){
 	ros::init(argc, argv, "Monosub");
 	ros::start();
 
-<<<<<<< HEAD
 	////tell the action client that we want to spin a thread by default
 	//MoveBaseClient ac("move_base", true);
 	//move_base_msgs::MoveBaseGoal goal;
@@ -159,11 +155,6 @@ int main(int argc, char **argv){
 		flann_index.reset(new FLANN(flann::KDTreeIndexParams(6)));
 	}
 #endif
-=======
-	parseParams(argc, argv);
-	printParams();
-
->>>>>>> master
 	grid_max_x = cloud_max_x*scale_factor;
 	grid_min_x = cloud_min_x*scale_factor;
 	grid_max_z = cloud_max_z*scale_factor;
@@ -256,7 +247,6 @@ void kfCallback(const geometry_msgs::PoseStamped::ConstPtr& camera_pose){
 		camera_pose->header.seq);
 }
 void saveMap(unsigned int id) {
-<<<<<<< HEAD
 	std::string map_name_template = cv::format("grid_map_f%.2f_o%.2f_l%d_v%d_g%d_b%d_h%d_n%d_c%d", free_thresh, occupied_thresh, use_local_counters,
 		visit_thresh, use_gaussian_counters, use_boundary_detection, use_height_thresholding, int(normal_thresh_deg), canny_thresh);
 	printf("saving maps with id: %u and name template: %s\n", id, map_name_template.c_str());
@@ -269,19 +259,6 @@ void saveMap(unsigned int id) {
 		cv::imwrite(map_name_template + ".jpg", grid_map);
 		cv::imwrite(map_name_template + ".jpg", grid_map_thresh);
 		cv::imwrite(map_name_template + ".jpg", grid_map_thresh_resized);
-=======
-	printf("saving maps with id: %u\n", id);
-	mkdir("results", S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
-	if (id > 0) {
-		cv::imwrite("results//grid_map_" + to_string(id) + ".jpg", grid_map);
-		cv::imwrite("results//grid_map_thresh_" + to_string(id) + ".jpg", grid_map_thresh);
-		cv::imwrite("results//grid_map_thresh_resized" + to_string(id) + ".jpg", grid_map_thresh_resized);
-	}
-	else {
-		cv::imwrite("results//grid_map.jpg", grid_map);
-		cv::imwrite("results//grid_map_thresh.jpg", grid_map_thresh);
-		cv::imwrite("results//grid_map_thresh_resized.jpg", grid_map_thresh_resized);
->>>>>>> master
 	}
 
 }
@@ -307,7 +284,6 @@ void ptCallback(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose){
 
 	updateGridMap(pts_and_pose);
 
-<<<<<<< HEAD
 	tf::TransformBroadcaster br;
 	tf::Transform odom_to_map_transform;
 	odom_to_map_transform.setOrigin(tf::Vector3(0.0, 0.0, 0.0));
@@ -326,8 +302,6 @@ void ptCallback(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose){
 //#endif
 //	double curr_time = std::chrono::duration_cast<std::chrono::duration<double>>(start_time - end_time).count();
 
-=======
->>>>>>> master
 	grid_map_msg.info.map_load_time = ros::Time::now();
 	float kf_pos_grid_x_us = (kf_location.x - cloud_min_x) * norm_factor_x_us;
 	float kf_pos_grid_z_us = (kf_location.z - cloud_min_z) * norm_factor_z_us;
@@ -397,7 +371,6 @@ void ptCallback(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose){
 	map_metadata.origin.position.y = 0;
 	map_metadata.origin.position.z = 0;
 	pub_grid_map.publish(grid_map_msg);
-<<<<<<< HEAD
 	pub_grid_map_metadata.publish(map_metadata);
 	++kf_id;
 		
@@ -412,8 +385,6 @@ void ptCallback(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose){
 	//	ROS_INFO("Hooray, the base moved 1 meter forward");
 	//else
 	//	ROS_INFO("The base failed to move forward 1 meter for some reason");
-=======
->>>>>>> master
 }
 void loopClosingCallback(const geometry_msgs::PoseArray::ConstPtr& all_kf_and_pts){
 	//ROS_INFO("Received points and pose: [%s]{%d}", pts_and_pose->header.frame_id.c_str(),
