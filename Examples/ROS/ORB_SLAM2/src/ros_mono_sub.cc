@@ -251,14 +251,14 @@ void saveMap(unsigned int id) {
 		visit_thresh, use_gaussian_counters, use_boundary_detection, use_height_thresholding, int(normal_thresh_deg), canny_thresh);
 	printf("saving maps with id: %u and name template: %s\n", id, map_name_template.c_str());
 	if (id > 0) {
-		cv::imwrite(map_name_template + "_" + to_string(id) + ".jpg", grid_map);
-		cv::imwrite(map_name_template + "_thresh_" + to_string(id) + ".jpg", grid_map_thresh);
-		cv::imwrite(map_name_template + "_thresh_resized" + to_string(id) + ".jpg", grid_map_thresh_resized);
+		cv::imwrite("grid_maps//" + map_name_template + "_" + to_string(id) + ".jpg", grid_map);
+		cv::imwrite("grid_maps//" + map_name_template + "_thresh_" + to_string(id) + ".jpg", grid_map_thresh);
+		cv::imwrite("grid_maps//" + map_name_template + "_thresh_resized" + to_string(id) + ".jpg", grid_map_thresh_resized);
 	}
 	else {
-		cv::imwrite(map_name_template + ".jpg", grid_map);
-		cv::imwrite(map_name_template + ".jpg", grid_map_thresh);
-		cv::imwrite(map_name_template + ".jpg", grid_map_thresh_resized);
+		cv::imwrite("grid_maps//" + map_name_template + ".jpg", grid_map);
+		cv::imwrite("grid_maps//" + map_name_template + ".jpg", grid_map_thresh);
+		cv::imwrite("grid_maps//" + map_name_template + ".jpg", grid_map_thresh_resized);
 	}
 
 }
@@ -305,6 +305,24 @@ void ptCallback(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose){
 	grid_map_msg.info.map_load_time = ros::Time::now();
 	float kf_pos_grid_x_us = (kf_location.x - cloud_min_x) * norm_factor_x_us;
 	float kf_pos_grid_z_us = (kf_location.z - cloud_min_z) * norm_factor_z_us;
+
+
+	init_pose.pose.position.x = kf_pos_grid_x_us;
+	init_pose.pose.position.y = kf_pos_grid_z_us;
+	ROS_INFO("Publishing initial pose: (%f, %f)\n", kf_pos_grid_x_us, kf_pos_grid_z_us);
+	init_pose.pose.position.z = 0;
+	// init_pose.pose.orientation = kf_orientation;
+	init_pose.pose.orientation.x = kf_orientation.x;
+	init_pose.pose.orientation.y = kf_orientation.z;
+	init_pose.pose.orientation.z = kf_orientation.y;
+	init_pose.pose.orientation.w = 1;
+	cv::Mat(6, 6, CV_64FC1, init_pose.covariance.elems).setTo(0);
+	init_pose_stamped.header.frame_id = "map";
+	init_pose_stamped.header.stamp = ros::Time::now();
+	init_pose_stamped.header.seq = ++init_pose_id;
+	init_pose_stamped.pose = init_pose;
+	pub_initial_pose.publish(init_pose_stamped);
+
 	if (enable_goal_publishing) {
 		if (kf_id == 0) {
 			init_pose.pose.position.x = kf_pos_grid_x_us;
@@ -336,10 +354,9 @@ void ptCallback(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose){
 				//curr_pose.pose.position.z = 0;
 				////init_pose.pose.orientation = kf_orientation;
 				//cv::Mat(6, 6, CV_64FC1, curr_pose.covariance.elems).setTo(0);
-				//curr_pose_stamped.header.frame_id = "map";
-				//curr_pose_stamped.header.stamp = ros::Time::now();
-				//curr_pose_stamped.header.seq = ++init_pose_id;
-				//curr_pose_stamped.pose = curr_pose;
+
+
+
 				pub_current_pose.publish(curr_pose.pose);
 				geometry_msgs::PoseArray curr_particles;
 				curr_particles.header = curr_pose_stamped.header;
@@ -350,9 +367,9 @@ void ptCallback(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose){
 			ROS_INFO("Publishing goal: (%f, %f)\n", kf_pos_grid_x_us, kf_pos_grid_z_us);
 			goal.pose.position.x = kf_pos_grid_x_us;
 			goal.pose.position.y = kf_pos_grid_z_us;
-			goal.pose.orientation.x = 0;
-			goal.pose.orientation.y = 0;
-			goal.pose.orientation.z = 0;
+			goal.pose.orientation.x = kf_orientation.x;
+			goal.pose.orientation.y = kf_orientation.z;
+			goal.pose.orientation.z = kf_orientation.y;
 			goal.pose.orientation.w = 1;
 			goal.header.frame_id = "map";
 			goal.header.stamp = ros::Time::now();

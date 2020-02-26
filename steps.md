@@ -109,7 +109,7 @@ rosbag play "/media/abhineet/Win 8/bags/2017-04-03-13-37-07.bag"
 rosrun rviz rviz -d grid_map.rviz
 rosrun rviz rviz -d navigation.rviz
 ---> test sequence to get goal publishing thing working: <!--- 
-roslaunch turtlebot_gazebo turtlebot_world.launch world_file:=/opt/ros/indigo/share/turtlebot_gazebo/worlds/empty.world
+roslaunch turtlebot_gazebo turtlebot_world.launch world_file:=/opt/ros/kinetic/share/turtlebot_gazebo/worlds/empty.world
 roslaunch amcl_demo.launch
 roslaunch view_navigation.launch
 rosrun robot_pose_publisher robot_pose_publisher
