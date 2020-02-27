@@ -25,6 +25,7 @@
 #include <actionlib/client/simple_action_client.h>
 #include <Eigen/Dense>
 #include <tf/transform_broadcaster.h>
+#include <queue>
 
 #ifndef DISABLE_FLANN
 #include <flann/flann.hpp>
@@ -60,7 +61,7 @@ bool use_height_thresholding = false;
 int canny_thresh = 350;
 bool show_camera_location = true;
 unsigned int gaussian_kernel_size = 3;
-int cam_radius = 2;
+int cam_radius = 3;
 // no. of keyframes between successive goal messages that are published
 unsigned int goal_gap = 20;
 bool enable_goal_publishing = false;
@@ -107,7 +108,7 @@ int kf_pos_grid_x, kf_pos_grid_z;
 geometry_msgs::Point kf_location;
 geometry_msgs::Quaternion kf_orientation;
 unsigned int kf_id = 0;
-unsigned int init_pose_id = 0, goal_id = 0;
+unsigned int init_pose_id = 0, curr_pose_id = 0, goal_id = 0;
 
 using namespace std;
 
@@ -117,6 +118,8 @@ void cloudCallback(const sensor_msgs::PointCloud2::ConstPtr& pt_cloud);
 void kfCallback(const geometry_msgs::PoseStamped::ConstPtr& camera_pose);
 void saveMap(unsigned int id = 0);
 void ptCallback(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose);
+void goalCallback(const geometry_msgs::PoseStamped new_goal);
+void initialPoseCallback(const geometry_msgs::PoseWithCovarianceStamped init_pose);
 void loopClosingCallback(const geometry_msgs::PoseArray::ConstPtr& all_kf_and_pts);
 void getMixMax(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose,
 	geometry_msgs::Point& min_pt, geometry_msgs::Point& max_pt);
@@ -203,13 +206,16 @@ int main(int argc, char **argv){
 
 	ros::NodeHandle nodeHandler;
 	ros::Subscriber sub_pts_and_pose = nodeHandler.subscribe("pts_and_pose", 1000, ptCallback);
+	ros::Subscriber sub_goal = nodeHandler.subscribe("goal", 1000, goalCallback);
+	ros::Subscriber sub_initial_pose = nodeHandler.subscribe("initialpose", 1000, initialPoseCallback);
 	ros::Subscriber sub_all_kf_and_pts = nodeHandler.subscribe("all_kf_and_pts", 1000, loopClosingCallback);
 	pub_grid_map = nodeHandler.advertise<nav_msgs::OccupancyGrid>("map", 1000);
 	pub_grid_map_metadata = nodeHandler.advertise<nav_msgs::MapMetaData>("map_metadata", 1000);
+	pub_current_pose = nodeHandler.advertise<geometry_msgs::PoseStamped>("robot_pose", 1000);
+	pub_initial_pose = nodeHandler.advertise<geometry_msgs::PoseWithCovarianceStamped>("initialpose", 1000, true);
+
 	if (enable_goal_publishing) {
 		pub_goal = nodeHandler.advertise<geometry_msgs::PoseStamped>("move_base_simple/goal", 1000);
-		pub_initial_pose = nodeHandler.advertise<geometry_msgs::PoseWithCovarianceStamped>("initialpose", 1000, true);
-		pub_current_pose = nodeHandler.advertise<geometry_msgs::Pose>("robot_pose", 1000, true);
 		pub_current_particles = nodeHandler.advertise<geometry_msgs::PoseArray>("particlecloud", 1000, true);
 	}
 	tf::TransformBroadcaster br;
@@ -262,6 +268,213 @@ void saveMap(unsigned int id) {
 	}
 
 }
+
+void initialPoseCallback(const geometry_msgs::PoseWithCovarianceStamped init_pose) {
+	// ROS_INFO("DFS position float: (%f, %f)\n", init_pose.pose.pose.position.x, init_pose.pose.pose.position.y);
+
+	float pt_pos_x = init_pose.pose.pose.position.x*scale_factor;
+	float pt_pos_z = init_pose.pose.pose.position.y*scale_factor;
+
+	int pt_pos_grid_x = int(floor((pt_pos_x) * norm_factor_x));
+	int pt_pos_grid_z = int(floor((pt_pos_z) * norm_factor_z));
+
+	ROS_INFO("DFS position index: (%i, %i)\n", pt_pos_grid_x, pt_pos_grid_z);
+
+
+	float goal_pos_x =  goal.pose.position.x*scale_factor;
+	float goal_pos_z =  goal.pose.position.y*scale_factor;
+
+
+	int kf_goal_pos_x = int(floor((goal_pos_x) * norm_factor_x));
+	int kf_goal_pos_z = int(floor((goal_pos_z) * norm_factor_z));
+
+	ROS_INFO("DFS goal index: (%i, %i)\n", kf_goal_pos_x, kf_goal_pos_z);
+
+}
+
+bool checkValid(int valid_x, int valid_y) {
+	if (valid_x < 0 || valid_x >= w)
+		return false;
+
+	if (valid_y < 0 || valid_y >= h)
+		return false;
+
+	return true;
+}
+
+
+
+// Check whether given cell (row, col) is a valid 
+// cell or not (in range) 
+bool isValid(int row, int col, int ROW, int COL) 
+{ 
+	return (row >= 0) && (row < ROW) && 
+		(col >= 0) && (col < COL); 
+} 
+
+// Helper function to convert 2D array of width (numCol) to 1D row-major array coordinates
+int convert2Dto1D(int row, int col, int numCol)
+{
+    return col + numCol * row;
+}
+
+// Check a NxN grid around a point
+bool checkNeighboursWithDepth(std::vector<signed char, std::allocator<signed char> > mat, int range, int x, int y, int numRow, int numCol)
+{ 
+    for(int i = -range; i <= range; i++){
+        for(int j = -range; j <= range; j++){
+            int row = x + i; 
+			int col = y + j;
+            cout << row << ", " << col << " :" << mat[convert2Dto1D(row, col, numCol)];
+            cout << endl;
+            
+            if (!isValid(row, col, numRow, numCol) || mat[convert2Dto1D(row, col, numCol)] != -1 )
+			{ 
+                return false;
+            }
+
+        }
+    }
+
+	// Return true if destination cannot be reached 
+	return true; 
+}
+// function to find the shortest path between 
+// a given source cell to a destination cell. 
+vector<geometry_msgs::Point> old_BFS(std::vector<signed char, std::allocator<signed char> > mat, int numRow, int numCol, geometry_msgs::Point src) 
+{ 
+	int MIN_PATH_SIZE = 5;
+	int MAX_OCCUPIED_PROB = 50;
+
+	// These arrays are used to get row and column 
+	// numbers of 4 neighbours of a given cell 
+	int rowNum[] = {-1, 0, 0, 1}; 
+	int colNum[] = {0, -1, 1, 0}; 
+
+    vector<geometry_msgs::Point> path; // Store path history
+	std::queue<vector<geometry_msgs::Point> > q;  // BFS queue
+	bool visited[convert2Dto1D(numRow, numCol, numCol) - 1]; 
+	memset(visited, false, sizeof visited); 
+	
+	// Mark the source cell as visited 
+	visited[convert2Dto1D(src.x, src.y, numCol)] = true; 
+
+	// Distance of source cell is 0 
+	geometry_msgs::Point s = src; 
+    path.push_back(s); 	
+	q.push(path); // Enqueue source cell 
+
+	while (!q.empty()) 
+	{ 
+        path = q.front();
+
+		geometry_msgs::Point pt = path[path.size() - 1]; 
+		// geometry_msgs::Point pt = curr.pt; 
+
+		// If we have reached the destination cell, 
+		// we are done 
+		// if (mat[pt.x][pt.y] == 20 || pt.x == dest.x && pt.y == dest.y) 
+		
+        // cout << convert2Dto1D(pt.x, pt.y, numCol) << " ";
+        if (mat[convert2Dto1D(pt.x, pt.y, numCol)] == -1 && path.size() >= MIN_PATH_SIZE) 
+        {
+            if (checkNeighboursWithDepth(mat, 2, pt.x, pt.y, numRow, numCol)){
+                return path; 
+            }
+        }
+
+        q.pop();
+
+		for (int i = 0; i < 4; i++) 
+		{ 
+			int row = pt.x + rowNum[i]; 
+			int col = pt.y + colNum[i]; 
+
+			if (isValid(row, col, numRow, numCol) 
+				&& mat[convert2Dto1D(row, col, numCol)] < MAX_OCCUPIED_PROB 
+				&& !visited[convert2Dto1D(row, col, numCol)])
+			{ 
+				// mark cell as visited and enqueue it 
+				visited[convert2Dto1D(row, col, numCol)] = true; 
+
+				geometry_msgs::Point newPoint;
+				newPoint.x = row;
+				newPoint.y = col;
+				// geometry_msgs::Point Adjcell = { newPoint, 
+				// 					curr.dist + 1 }; 
+
+                vector<geometry_msgs::Point> newpath(path);
+                newpath.push_back(newPoint); 
+
+				q.push(newpath); 
+			} 
+		} 
+	} 
+
+	// Return blank vector if destination cannot be reached 
+    vector<geometry_msgs::Point> noPath; 
+	return noPath; 
+} 
+
+
+void BFS(int init_x, int init_y, int final_x, int final_y){
+
+	int MIN_PATH_SIZE = 5;
+	int MAX_OCCUPIED_PROB = 50;
+
+	// These arrays are used to get row and column 
+	// numbers of 4 neighbours of a given cell 
+	int rowNum[] = {-1, 0, 0, 1}; 
+	int colNum[] = {0, -1, 1, 0};
+
+	ROS_INFO("pose start: (%i, %i) end (%i, %i)\n", init_x, init_y,final_x, final_y );
+
+
+	grid_map_int = cv::Mat(h, w, CV_8SC1, (char*)(grid_map_msg.data.data()));
+
+	ROS_INFO("value start: (%f) end: (%f)\n", grid_map.at<float>(init_x, init_y), grid_map.at<float>(final_x, final_y));
+	// ROS_INFO("value start: (%f) end: (%f)\n", grid_map_msg.data.at<float>(init_x, init_y), grid_map_msg.data.at<float>(final_x, final_y));
+	ROS_INFO("value start: (%i) end: (%i)\n", grid_map_int.at<int>(init_x, init_y), grid_map_int.at<int>(final_x, final_y));
+	// ROS_INFO("value start: (%f) end: (%f)\n", grid_map_int.at<float>(init_x, init_y), grid_map_int.at<float>(final_x, final_y));
+	// ROS_INFO("value start: (%f) end: (%f)\n", grid_map_int.at<float>(init_x, init_y), grid_map_int.at<float>(final_x, final_y));
+	// ROS_INFO("value start: (%c) end: (%c)\n", grid_map_int.at<char>(init_x, init_y), grid_map_int.at<char>(final_x, final_y));
+
+
+	// cout << grid_map_int.rowRange(293, 296) << endl;
+	
+}
+
+void goalCallback(const geometry_msgs::PoseStamped new_goal){
+
+
+	goal.pose = new_goal.pose;
+
+	// ROS_INFO("current DFS pose: (%i, %i)\n", kf_pos_grid_x, kf_pos_grid_z);
+	// cv::Size s = grid_map.size();
+	// ROS_INFO("current map size: (%i, %i)\n", s.height, s.width);
+
+	// ROS_INFO("current map value: (%f)\n", grid_map.at<float>(kf_pos_grid_x, kf_pos_grid_z));
+
+	float goal_pos_x =  goal.pose.position.x*scale_factor;
+	float goal_pos_z =  goal.pose.position.y*scale_factor;
+
+	int kf_goal_pos_x = int(floor((goal_pos_x) * norm_factor_x));
+	int kf_goal_pos_z = int(floor((goal_pos_z) * norm_factor_z));
+
+	ROS_INFO("DFS goal index: (%i, %i)\n", kf_goal_pos_x, kf_goal_pos_z);
+
+	if (kf_goal_pos_x < 0 || kf_goal_pos_x >= w)
+		return;
+
+	if (kf_goal_pos_z < 0 || kf_goal_pos_z >= h)
+		return;
+
+	BFS(kf_pos_grid_x, kf_pos_grid_z, kf_goal_pos_x, kf_goal_pos_z);
+
+	// ROS_INFO("current map value: (%f)\n", grid_map.at<float>(kf_goal_pos_x, kf_goal_pos_z));
+	// ROS_INFO("DFS goal changed!: (%f, %f)\n", goal.pose.position.x, goal.pose.position.y);
+}
+
 void ptCallback(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose){
 	//ROS_INFO("Received points and pose: [%s]{%d}", pts_and_pose->header.frame_id.c_str(),
 	//	pts_and_pose->header.seq);
@@ -307,21 +520,22 @@ void ptCallback(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose){
 	float kf_pos_grid_z_us = (kf_location.z - cloud_min_z) * norm_factor_z_us;
 
 
-	init_pose.pose.position.x = kf_pos_grid_x_us;
-	init_pose.pose.position.y = kf_pos_grid_z_us;
-	ROS_INFO("Publishing initial pose: (%f, %f)\n", kf_pos_grid_x_us, kf_pos_grid_z_us);
-	init_pose.pose.position.z = 0;
-	// init_pose.pose.orientation = kf_orientation;
-	init_pose.pose.orientation.x = kf_orientation.x;
-	init_pose.pose.orientation.y = kf_orientation.z;
-	init_pose.pose.orientation.z = kf_orientation.y;
-	init_pose.pose.orientation.w = 1;
-	cv::Mat(6, 6, CV_64FC1, init_pose.covariance.elems).setTo(0);
-	init_pose_stamped.header.frame_id = "map";
-	init_pose_stamped.header.stamp = ros::Time::now();
-	init_pose_stamped.header.seq = ++init_pose_id;
-	init_pose_stamped.pose = init_pose;
-	pub_initial_pose.publish(init_pose_stamped);
+	curr_pose.pose.position.x = kf_pos_grid_x_us;
+	curr_pose.pose.position.y = kf_pos_grid_z_us;
+	// ROS_INFO("Publishing current pose: (%f, %f)\n", kf_pos_grid_x_us, kf_pos_grid_z_us);
+	curr_pose.pose.position.z = 0;
+	curr_pose.pose.orientation = kf_orientation;
+	// curr_pose.pose.orientation.x = kf_orientation.x;
+	// curr_pose.pose.orientation.y = kf_orientation.z;
+	// curr_pose.pose.orientation.z = kf_orientation.y;
+	// curr_pose.pose.orientation.w = kf_orientation.w;
+	cv::Mat(6, 6, CV_64FC1, curr_pose.covariance.elems).setTo(0);
+	curr_pose_stamped.header.frame_id = "map";
+	curr_pose_stamped.header.stamp = ros::Time::now();
+	curr_pose_stamped.header.seq = ++curr_pose_id;
+	curr_pose_stamped.pose = curr_pose;
+
+	pub_current_pose.publish(curr_pose_stamped);
 
 	if (enable_goal_publishing) {
 		if (kf_id == 0) {
@@ -340,7 +554,7 @@ void ptCallback(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose){
 			init_pose_stamped.header.seq = ++init_pose_id;
 			init_pose_stamped.pose = init_pose;
 			pub_initial_pose.publish(init_pose_stamped);
-			pub_current_pose.publish(init_pose.pose);
+			// pub_current_pose.publish(init_pose.pose);
 			geometry_msgs::PoseArray curr_particles;
 			curr_particles.header = init_pose_stamped.header;
 			curr_particles.poses.push_back(init_pose.pose);
@@ -349,15 +563,14 @@ void ptCallback(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose){
 		else if (kf_id % goal_gap == 0) {
 			if (goal_id>0){
 				curr_pose.pose = goal.pose;
-				ROS_INFO("Publishing current pose: (%f, %f)\n",
-					curr_pose.pose.position.x, curr_pose.pose.position.y);
+				// ROS_INFO("Publishing current pose: (%f, %f)\n",curr_pose.pose.position.x, curr_pose.pose.position.y);
 				//curr_pose.pose.position.z = 0;
 				////init_pose.pose.orientation = kf_orientation;
 				//cv::Mat(6, 6, CV_64FC1, curr_pose.covariance.elems).setTo(0);
 
 
 
-				pub_current_pose.publish(curr_pose.pose);
+				// pub_current_pose.publish(curr_pose.pose);
 				geometry_msgs::PoseArray curr_particles;
 				curr_particles.header = curr_pose_stamped.header;
 				curr_particles.poses.push_back(curr_pose.pose);
@@ -365,16 +578,16 @@ void ptCallback(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose){
 			}
 
 			ROS_INFO("Publishing goal: (%f, %f)\n", kf_pos_grid_x_us, kf_pos_grid_z_us);
-			goal.pose.position.x = kf_pos_grid_x_us;
-			goal.pose.position.y = kf_pos_grid_z_us;
-			goal.pose.orientation.x = kf_orientation.x;
-			goal.pose.orientation.y = kf_orientation.z;
-			goal.pose.orientation.z = kf_orientation.y;
-			goal.pose.orientation.w = 1;
+			// goal.pose.position.x = kf_pos_grid_x_us;
+			// goal.pose.position.y = kf_pos_grid_z_us;
+			// goal.pose.orientation.x = kf_orientation.x;
+			// goal.pose.orientation.y = kf_orientation.z;
+			// goal.pose.orientation.z = kf_orientation.y;
+			// goal.pose.orientation.w = 1;
 			goal.header.frame_id = "map";
 			goal.header.stamp = ros::Time::now();
 			goal.header.seq = ++goal_id;
-			pub_goal.publish(goal);
+			// pub_goal.publish(goal);
 		}
 		//	
 		//::ros::console::print();
@@ -507,6 +720,16 @@ void processMapPt(const geometry_msgs::Point &curr_pt, cv::Mat &occupied, cv::Ma
 	}
 }
 
+
+void processGoalandPoints(int kf_pos_grid_x, int kf_pos_grid_z) {
+	// ROS_INFO("current DFS pose: (%i, %i)\n", kf_pos_grid_x, kf_pos_grid_z);
+	// ROS_INFO("current DFS goal: (%f, %f)\n", goal.pose.position.x, goal.pose.position.y);
+	// cv::Size s = grid_map.size();
+	// ROS_INFO("current map size: (%i, %i)\n", s.height, s.width);
+
+	// ROS_INFO("current map value: (%f)\n", grid_map.at<float>(kf_pos_grid_x, kf_pos_grid_z));
+}	
+
 void processMapPts(const std::vector<geometry_msgs::Pose> &pts, unsigned int n_pts,
 	unsigned int start_id, int kf_pos_grid_x, int kf_pos_grid_z) {
 	unsigned int end_id = start_id + n_pts;
@@ -634,7 +857,11 @@ void updateGridMap(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose){
 	}
 	unsigned int n_pts = pts_and_pose->poses.size() - 1;
 	//printf("Processing key frame %u and %u points\n",n_kf_received, n_pts);
+
+	// processGoalandPoints(kf_pos_grid_x, kf_pos_grid_z);
+
 	processMapPts(pts_and_pose->poses, n_pts, 1, kf_pos_grid_x, kf_pos_grid_z);
+
 
 	getGridMap();
 	showGridMap(pts_and_pose->header.seq);
