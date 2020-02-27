@@ -10,6 +10,7 @@
 #include "geometry_msgs/PoseWithCovarianceStamped.h"
 #include "geometry_msgs/PoseArray.h"
 #include "nav_msgs/OccupancyGrid.h"
+#include "nav_msgs/Path.h"
 
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
@@ -87,7 +88,7 @@ int h, w;
 unsigned int n_kf_received;
 bool loop_closure_being_processed = false;
 ros::Publisher pub_grid_map, pub_grid_map_metadata;
-ros::Publisher pub_goal;
+ros::Publisher pub_goal, pub_goal_path;
 ros::Publisher pub_initial_pose, pub_current_pose, pub_current_particles;
 nav_msgs::OccupancyGrid grid_map_msg;
 Eigen::Matrix4d transform_mat;
@@ -216,6 +217,7 @@ int main(int argc, char **argv){
 	pub_grid_map_metadata = nodeHandler.advertise<nav_msgs::MapMetaData>("map_metadata", 1000);
 	pub_current_pose = nodeHandler.advertise<geometry_msgs::PoseStamped>("robot_pose", 1000);
 	pub_initial_pose = nodeHandler.advertise<geometry_msgs::PoseWithCovarianceStamped>("initialpose", 1000, true);
+	pub_goal_path = nodeHandler.advertise<nav_msgs::Path>("goal_path", 1000);
 
 	if (enable_goal_publishing) {
 		pub_goal = nodeHandler.advertise<geometry_msgs::PoseStamped>("move_base_simple/goal", 1000);
@@ -396,12 +398,11 @@ vector<geometry_msgs::Point>  BFS(int init_x, int init_y, int final_x, int final
 			int col = pt.y + colNum[i]; 
 
 			if (isValid(row, col) 
-				// && grid_map_int.at<int>(init_x, init_y) < MAX_OCCUPIED_PROB 
+				&& 0 <= grid_map_int.at<int>(init_x, init_y) < MAX_OCCUPIED_PROB 
 				&& visited.at<int>(row, col) != 1)
 			{ 
 				// mark cell as visited and enqueue it 
-				visited.at<int>(init_x, init_y) = 1;
-
+				visited.at<int>(row, col) = 1;
 				geometry_msgs::Point newPoint;
 				newPoint.x = row;
 				newPoint.y = col;
@@ -422,19 +423,47 @@ vector<geometry_msgs::Point>  BFS(int init_x, int init_y, int final_x, int final
 	
 }
 
+void simple_printpath(vector<geometry_msgs::Point>& path) 
+{ 
+    int size = path.size(); 
+	cout << "Path of size " << size << ":"; 
 
-void printpath(vector<geometry_msgs::Point>& path) 
+    for (int i = 0; i < size; i++)  
+		cout << path[i].x << "," << path[i].y << endl;     
+    cout << endl; 
+} 
+
+
+void generatePath(vector<geometry_msgs::Point>& path) 
 { 
     int size = path.size();
-	cout << "Path of size " << size << " :"; 
-    for (int i = 0; i < size; i++)  
-        cout << path[i].x << "," << path[i].y << " ";     
-    cout << endl; 
+	cout << "Path of size " << size << ":"; 
+
+	nav_msgs::Path local_goal_path;
+    for (int i = 0; i < size; i++) {
+		geometry_msgs::PoseStamped path_pose_stamped;
+		path_pose_stamped.header.frame_id = "map";
+		path_pose_stamped.header.stamp = ros::Time::now();
+		path_pose_stamped.header.seq = i;
+
+		cout << path[i].x << "," << path[i].y << " == ";     
+
+		path_pose_stamped.pose.position.x = float((path[i].x) / (norm_factor_x * scale_factor));
+		// path_pose_stamped.pose.y = 	0
+		path_pose_stamped.pose.position.y = (path[i].y) / (norm_factor_x * scale_factor);
+
+		cout << path_pose_stamped.pose.position.x << "," << path_pose_stamped.pose.position.z  << endl;     
+
+		// path_pose_stamped.pose.w = 	0
+		local_goal_path.poses.push_back(path_pose_stamped);
+	}
 
 
 	goal_path.header.frame_id = "map";
 	goal_path.header.stamp = ros::Time::now();
 	goal_path.header.seq = ++curr_path_id;
+	goal_path.poses = local_goal_path.poses;
+	pub_goal_path.publish(goal_path);
 } 
 
 
@@ -472,8 +501,8 @@ void goalCallback(const geometry_msgs::PoseStamped new_goal){
 	// vector<geometry_msgs::Point> BFSpath =  BFS(kf_pos_grid_x, kf_pos_grid_z, kf_goal_pos_x, kf_goal_pos_z);
 	vector<geometry_msgs::Point> BFSpath =  BFS(int_pos_grid_x, int_pos_grid_z, kf_goal_pos_x, kf_goal_pos_z);
 
-	printpath(BFSpath);
-
+	// simple_printpath(BFSpath);
+	generatePath(BFSpath);
 
 	// ROS_INFO("current map value: (%f)\n", grid_map.at<float>(kf_goal_pos_x, kf_goal_pos_z));
 	// ROS_INFO("DFS goal changed!: (%f, %f)\n", goal.pose.position.x, goal.pose.position.y);
