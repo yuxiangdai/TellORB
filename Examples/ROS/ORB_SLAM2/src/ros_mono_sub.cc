@@ -96,6 +96,8 @@ tf::StampedTransform odom_to_map_transform_stamped;
 geometry_msgs::PoseStamped goal;
 geometry_msgs::PoseWithCovariance init_pose, curr_pose;
 
+nav_msgs::Path goal_path;
+
 //#ifdef COMPILEDWITHC11
 //std::chrono::steady_clock::time_point start_time, end_time;
 //#else
@@ -103,12 +105,13 @@ geometry_msgs::PoseWithCovariance init_pose, curr_pose;
 //#endif
 //bool got_start_time;
 
+int int_pos_grid_x, int_pos_grid_z;
 float kf_pos_x, kf_pos_z;
 int kf_pos_grid_x, kf_pos_grid_z;
 geometry_msgs::Point kf_location;
 geometry_msgs::Quaternion kf_orientation;
 unsigned int kf_id = 0;
-unsigned int init_pose_id = 0, curr_pose_id = 0, goal_id = 0;
+unsigned int init_pose_id = 0, curr_pose_id = 0, curr_path_id = 0, goal_id = 0;
 
 using namespace std;
 
@@ -206,7 +209,7 @@ int main(int argc, char **argv){
 
 	ros::NodeHandle nodeHandler;
 	ros::Subscriber sub_pts_and_pose = nodeHandler.subscribe("pts_and_pose", 1000, ptCallback);
-	ros::Subscriber sub_goal = nodeHandler.subscribe("goal", 1000, goalCallback);
+	ros::Subscriber sub_goal = nodeHandler.subscribe("move_base_simple/goal", 1000, goalCallback);
 	ros::Subscriber sub_initial_pose = nodeHandler.subscribe("initialpose", 1000, initialPoseCallback);
 	ros::Subscriber sub_all_kf_and_pts = nodeHandler.subscribe("all_kf_and_pts", 1000, loopClosingCallback);
 	pub_grid_map = nodeHandler.advertise<nav_msgs::OccupancyGrid>("map", 1000);
@@ -275,10 +278,10 @@ void initialPoseCallback(const geometry_msgs::PoseWithCovarianceStamped init_pos
 	float pt_pos_x = init_pose.pose.pose.position.x*scale_factor;
 	float pt_pos_z = init_pose.pose.pose.position.y*scale_factor;
 
-	int pt_pos_grid_x = int(floor((pt_pos_x) * norm_factor_x));
-	int pt_pos_grid_z = int(floor((pt_pos_z) * norm_factor_z));
+	int_pos_grid_x = int(floor((pt_pos_x) * norm_factor_x));
+	int_pos_grid_z = int(floor((pt_pos_z) * norm_factor_z));
 
-	ROS_INFO("DFS position index: (%i, %i)\n", pt_pos_grid_x, pt_pos_grid_z);
+	ROS_INFO("DFS position index: (%i, %i)\n", int_pos_grid_x, int_pos_grid_z);
 
 
 	float goal_pos_x =  goal.pose.position.x*scale_factor;
@@ -292,7 +295,7 @@ void initialPoseCallback(const geometry_msgs::PoseWithCovarianceStamped init_pos
 
 }
 
-bool checkValid(int valid_x, int valid_y) {
+bool isValid(int valid_x, int valid_y) {
 	if (valid_x < 0 || valid_x >= w)
 		return false;
 
@@ -301,16 +304,6 @@ bool checkValid(int valid_x, int valid_y) {
 
 	return true;
 }
-
-
-
-// Check whether given cell (row, col) is a valid 
-// cell or not (in range) 
-bool isValid(int row, int col, int ROW, int COL) 
-{ 
-	return (row >= 0) && (row < ROW) && 
-		(col >= 0) && (col < COL); 
-} 
 
 // Helper function to convert 2D array of width (numCol) to 1D row-major array coordinates
 int convert2Dto1D(int row, int col, int numCol)
@@ -328,7 +321,7 @@ bool checkNeighboursWithDepth(std::vector<signed char, std::allocator<signed cha
             cout << row << ", " << col << " :" << mat[convert2Dto1D(row, col, numCol)];
             cout << endl;
             
-            if (!isValid(row, col, numRow, numCol) || mat[convert2Dto1D(row, col, numCol)] != -1 )
+            if (!isValid(row, col) || mat[convert2Dto1D(row, col, numCol)] != -1 )
 			{ 
                 return false;
             }
@@ -339,85 +332,8 @@ bool checkNeighboursWithDepth(std::vector<signed char, std::allocator<signed cha
 	// Return true if destination cannot be reached 
 	return true; 
 }
-// function to find the shortest path between 
-// a given source cell to a destination cell. 
-vector<geometry_msgs::Point> old_BFS(std::vector<signed char, std::allocator<signed char> > mat, int numRow, int numCol, geometry_msgs::Point src) 
-{ 
-	int MIN_PATH_SIZE = 5;
-	int MAX_OCCUPIED_PROB = 50;
 
-	// These arrays are used to get row and column 
-	// numbers of 4 neighbours of a given cell 
-	int rowNum[] = {-1, 0, 0, 1}; 
-	int colNum[] = {0, -1, 1, 0}; 
-
-    vector<geometry_msgs::Point> path; // Store path history
-	std::queue<vector<geometry_msgs::Point> > q;  // BFS queue
-	bool visited[convert2Dto1D(numRow, numCol, numCol) - 1]; 
-	memset(visited, false, sizeof visited); 
-	
-	// Mark the source cell as visited 
-	visited[convert2Dto1D(src.x, src.y, numCol)] = true; 
-
-	// Distance of source cell is 0 
-	geometry_msgs::Point s = src; 
-    path.push_back(s); 	
-	q.push(path); // Enqueue source cell 
-
-	while (!q.empty()) 
-	{ 
-        path = q.front();
-
-		geometry_msgs::Point pt = path[path.size() - 1]; 
-		// geometry_msgs::Point pt = curr.pt; 
-
-		// If we have reached the destination cell, 
-		// we are done 
-		// if (mat[pt.x][pt.y] == 20 || pt.x == dest.x && pt.y == dest.y) 
-		
-        // cout << convert2Dto1D(pt.x, pt.y, numCol) << " ";
-        if (mat[convert2Dto1D(pt.x, pt.y, numCol)] == -1 && path.size() >= MIN_PATH_SIZE) 
-        {
-            if (checkNeighboursWithDepth(mat, 2, pt.x, pt.y, numRow, numCol)){
-                return path; 
-            }
-        }
-
-        q.pop();
-
-		for (int i = 0; i < 4; i++) 
-		{ 
-			int row = pt.x + rowNum[i]; 
-			int col = pt.y + colNum[i]; 
-
-			if (isValid(row, col, numRow, numCol) 
-				&& mat[convert2Dto1D(row, col, numCol)] < MAX_OCCUPIED_PROB 
-				&& !visited[convert2Dto1D(row, col, numCol)])
-			{ 
-				// mark cell as visited and enqueue it 
-				visited[convert2Dto1D(row, col, numCol)] = true; 
-
-				geometry_msgs::Point newPoint;
-				newPoint.x = row;
-				newPoint.y = col;
-				// geometry_msgs::Point Adjcell = { newPoint, 
-				// 					curr.dist + 1 }; 
-
-                vector<geometry_msgs::Point> newpath(path);
-                newpath.push_back(newPoint); 
-
-				q.push(newpath); 
-			} 
-		} 
-	} 
-
-	// Return blank vector if destination cannot be reached 
-    vector<geometry_msgs::Point> noPath; 
-	return noPath; 
-} 
-
-
-void BFS(int init_x, int init_y, int final_x, int final_y){
+vector<geometry_msgs::Point>  BFS(int init_x, int init_y, int final_x, int final_y){
 
 	int MIN_PATH_SIZE = 5;
 	int MAX_OCCUPIED_PROB = 50;
@@ -441,8 +357,86 @@ void BFS(int init_x, int init_y, int final_x, int final_y){
 
 
 	// cout << grid_map_int.rowRange(293, 296) << endl;
+
+
+
+	////////////////////////////////////
+    vector<geometry_msgs::Point> path; // Store path history
+	std::queue<vector<geometry_msgs::Point> > q;  // BFS queue
+	cv::Mat visited;
+	visited.create(h, w, CV_32FC1);
+	visited.setTo(cv::Scalar(0));
+	
+	visited.at<int>(init_x, init_y) = 1;
+
+	// Distance of source cell is 0 
+	geometry_msgs::Point s; 
+	s.x = init_x;
+	s.y = init_y;
+    path.push_back(s); 	
+	q.push(path); // Enqueue source cell 
+
+	while (!q.empty()) 
+	{ 
+        path = q.front();
+
+
+		geometry_msgs::Point pt = path[path.size() - 1]; 
+
+        if (pt.x == final_x && pt.y == final_y ) 
+        {
+            return path; 
+        }
+
+        q.pop();
+
+		for (int i = 0; i < 4; i++) 
+		{ 
+			int row = pt.x + rowNum[i]; 
+			int col = pt.y + colNum[i]; 
+
+			if (isValid(row, col) 
+				// && grid_map_int.at<int>(init_x, init_y) < MAX_OCCUPIED_PROB 
+				&& visited.at<int>(row, col) != 1)
+			{ 
+				// mark cell as visited and enqueue it 
+				visited.at<int>(init_x, init_y) = 1;
+
+				geometry_msgs::Point newPoint;
+				newPoint.x = row;
+				newPoint.y = col;
+
+                vector<geometry_msgs::Point> newpath(path);
+                newpath.push_back(newPoint); 
+
+				q.push(newpath); 
+			} 
+		} 
+	} 
+
+	// Return blank vector if destination cannot be reached 
+    // vector<geometry_msgs::Point> noPath; 
+	return path; 
+
+
 	
 }
+
+
+void printpath(vector<geometry_msgs::Point>& path) 
+{ 
+    int size = path.size();
+	cout << "Path of size " << size << " :"; 
+    for (int i = 0; i < size; i++)  
+        cout << path[i].x << "," << path[i].y << " ";     
+    cout << endl; 
+
+
+	goal_path.header.frame_id = "map";
+	goal_path.header.stamp = ros::Time::now();
+	goal_path.header.seq = ++curr_path_id;
+} 
+
 
 void goalCallback(const geometry_msgs::PoseStamped new_goal){
 
@@ -458,6 +452,8 @@ void goalCallback(const geometry_msgs::PoseStamped new_goal){
 	float goal_pos_x =  goal.pose.position.x*scale_factor;
 	float goal_pos_z =  goal.pose.position.y*scale_factor;
 
+
+	
 	int kf_goal_pos_x = int(floor((goal_pos_x) * norm_factor_x));
 	int kf_goal_pos_z = int(floor((goal_pos_z) * norm_factor_z));
 
@@ -469,7 +465,15 @@ void goalCallback(const geometry_msgs::PoseStamped new_goal){
 	if (kf_goal_pos_z < 0 || kf_goal_pos_z >= h)
 		return;
 
-	BFS(kf_pos_grid_x, kf_pos_grid_z, kf_goal_pos_x, kf_goal_pos_z);
+
+
+
+
+	// vector<geometry_msgs::Point> BFSpath =  BFS(kf_pos_grid_x, kf_pos_grid_z, kf_goal_pos_x, kf_goal_pos_z);
+	vector<geometry_msgs::Point> BFSpath =  BFS(int_pos_grid_x, int_pos_grid_z, kf_goal_pos_x, kf_goal_pos_z);
+
+	printpath(BFSpath);
+
 
 	// ROS_INFO("current map value: (%f)\n", grid_map.at<float>(kf_goal_pos_x, kf_goal_pos_z));
 	// ROS_INFO("DFS goal changed!: (%f, %f)\n", goal.pose.position.x, goal.pose.position.y);
