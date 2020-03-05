@@ -3,6 +3,8 @@
 #include<fstream>
 #include<chrono>
 
+#include<sstream>
+
 #include<ros/ros.h>
 #include <cv_bridge/cv_bridge.h>
 #include "sensor_msgs/PointCloud2.h"
@@ -11,6 +13,7 @@
 #include "geometry_msgs/PoseArray.h"
 #include "nav_msgs/OccupancyGrid.h"
 #include "nav_msgs/Path.h"
+#include "std_msgs/String.h"
 
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
@@ -21,6 +24,8 @@
 #include <opencv2/highgui/highgui_c.h>
 #include <opencv2/highgui/highgui.hpp>
 #include <Converter.h>
+
+// #include <boost/algorithm/string/split.hpp>
 
 #include <move_base_msgs/MoveBaseAction.h>
 #include <actionlib/client/simple_action_client.h>
@@ -90,6 +95,7 @@ bool loop_closure_being_processed = false;
 ros::Publisher pub_grid_map, pub_grid_map_metadata;
 ros::Publisher pub_goal, pub_goal_path;
 ros::Publisher pub_initial_pose, pub_current_pose, pub_current_particles;
+ros::Publisher pub_command;
 nav_msgs::OccupancyGrid grid_map_msg;
 Eigen::Matrix4d transform_mat;
 geometry_msgs::PoseWithCovarianceStamped init_pose_stamped, curr_pose_stamped;
@@ -220,6 +226,7 @@ int main(int argc, char **argv){
 	pub_current_pose = nodeHandler.advertise<geometry_msgs::PoseStamped>("robot_pose", 1000);
 	pub_initial_pose = nodeHandler.advertise<geometry_msgs::PoseWithCovarianceStamped>("initialpose", 1000, true);
 	pub_goal_path = nodeHandler.advertise<nav_msgs::Path>("goal_path", 1000);
+	pub_command = nodeHandler.advertise<std_msgs::String>("tello/command", 1000);
 
 	if (enable_goal_publishing) {
 		pub_goal = nodeHandler.advertise<geometry_msgs::PoseStamped>("move_base_simple/goal", 1000);
@@ -291,7 +298,7 @@ void initialPoseCallback(const geometry_msgs::PoseWithCovarianceStamped initial_
 	ROS_INFO("DFS initial position index: (%i, %i)\n", int_pos_grid_x, int_pos_grid_z);
 
 	double test = tf::getYaw(init_pose.pose.orientation);
-	cout << "yaw: "<< test;
+	cout << "Current Angle: "<< test;
 	// tfScalar yaw, pitch, roll;
 	// tf::Matrix3x3 mat(q);
 	// mat.getEulerYPR(&yaw, &pitch, &roll);
@@ -478,7 +485,7 @@ void returnNextCommand(vector<geometry_msgs::Point>& path)
 	int y_diff =  path[1].y - path[0].y;
 	
 	cout << "First and Second: ";
-	cout << "x_diff" << x_diff << ", y_diff" << y_diff << endl;
+	cout << "x_diff: " << x_diff << ", y_diff: " << y_diff << endl;
 
 	float pt_pos_x = init_pose.pose.position.x;
 	float pt_pos_z = init_pose.pose.position.y;
@@ -488,6 +495,33 @@ void returnNextCommand(vector<geometry_msgs::Point>& path)
 	// curr_pose.pose.orientation.z = kf_orientation.y;
 	// curr_pose.pose.orientation.w = -kf_orientation.w;
 
+
+	double currentAngle = tf::getYaw(init_pose.pose.orientation);
+
+
+	double desiredAngle = currentAngle;
+	if(y_diff == 1){
+		desiredAngle = M_PI / 2;
+	} 
+	else if(x_diff == 1){
+		desiredAngle = 0;
+	} else if(x_diff == -1){
+		desiredAngle = M_PI;
+	} else if(y_diff == -1){
+		desiredAngle = - M_PI / 2;
+	}
+    cout << "Current Angle: "<< currentAngle << "Desired Angle: "<< desiredAngle << " .";
+
+	// CCW angle needed 
+	int AngleDiff = int((desiredAngle - currentAngle) * 180 / M_PI);
+
+	cout << "angle_diff: " << AngleDiff << endl; 
+
+	std_msgs::String msg;
+	std::stringstream ss;
+	ss << "rotate " << AngleDiff;
+	msg.data = ss.str();
+	pub_command.publish(msg);
 
 	cout << "init_pose:" << pt_pos_x << ", " << pt_pos_z << endl;
 
