@@ -129,6 +129,7 @@ bool isValid(int valid_x, int valid_y);
 void returnNextCommand(vector<geometry_msgs::Point>& path);
 void generatePath(vector<geometry_msgs::Point>& path);
 void printPointPath(vector<geometry_msgs::Point>& path);
+void publishCommand(std::string command);
 
 // ORBSLAM functions
 void updateGridMap(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose);
@@ -261,6 +262,8 @@ int main(int argc, char **argv){
 	cv::namedWindow("grid_map_thresh_resized", CV_WINDOW_NORMAL);
 	cv::namedWindow("grid_map_msg", CV_WINDOW_NORMAL);
 
+
+
 	ros::spin();
 	ros::shutdown();
 	cv::destroyAllWindows();
@@ -357,15 +360,13 @@ void currentPoseCallback(const geometry_msgs::PoseWithCovarianceStamped current_
 		return;
 	}
 
-		// vector<geometry_msgs::Point> BFSpath =  BFS(kf_pos_grid_x, kf_pos_grid_z, kf_goal_pos_x, kf_goal_pos_z);
-	// vector<geometry_msgs::Point> BFSpath = BFS(int_pos_grid_x, int_pos_grid_z, kf_goal_pos_x, kf_goal_pos_z);
+	vector<geometry_msgs::Point> BFSpath = BFS(int_pos_grid_x, int_pos_grid_z, kf_goal_pos_x, kf_goal_pos_z);
 
-	// printPointPath(BFSpath);
+	printPointPath(BFSpath);
 
-	// generatePath(BFSpath);
+	generatePath(BFSpath);
 
-    // returnNextCommand(BFSpath);
-
+    returnNextCommand(BFSpath);
 
 }
 
@@ -580,6 +581,9 @@ void returnNextCommand(vector<geometry_msgs::Point>& path)
 	cout << ss.str() << endl;
 	pub_command.publish(msg);
 
+	// TODO: add wait time, then publish forward message
+	// publishCommand("test");
+
 
 	float world_x = (path[1].x) / (norm_factor_x * scale_factor);
 	float world_y = (path[1].y) / (norm_factor_z * scale_factor);
@@ -588,6 +592,14 @@ void returnNextCommand(vector<geometry_msgs::Point>& path)
 	// cout << "final_pose:" << world_x << ", " << world_y << endl;
 }
 
+void publishCommand(std::string command){
+	std_msgs::String msg;
+	std::stringstream ss;
+	ss << command;
+	msg.data = ss.str();
+	cout << ss.str() << endl;
+	pub_command.publish(msg);
+}
 
 void generatePath(vector<geometry_msgs::Point>& path) 
 { 
