@@ -121,7 +121,16 @@ unsigned int kf_id = 0;
 unsigned int init_pose_id = 0, curr_pose_id = 0, curr_path_id = 0, goal_id = 0;
 
 using namespace std;
+using namespace cv;
 
+// Search functions
+vector<geometry_msgs::Point> BFS(int init_x, int init_y, int final_x, int final_y);
+bool isValid(int valid_x, int valid_y);
+void returnNextCommand(vector<geometry_msgs::Point>& path);
+void generatePath(vector<geometry_msgs::Point>& path);
+void printPointPath(vector<geometry_msgs::Point>& path);
+
+// ORBSLAM functions
 void updateGridMap(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose);
 void resetGridMap(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose);
 void cloudCallback(const sensor_msgs::PointCloud2::ConstPtr& pt_cloud);
@@ -130,7 +139,7 @@ void saveMap(unsigned int id = 0);
 void ptCallback(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose);
 void goalCallback(const geometry_msgs::PoseStamped new_goal);
 void initialPoseCallback(const geometry_msgs::PoseWithCovarianceStamped initial_pose);
-void currentPoseCallback(const geometry_msgs::PoseStamped curr_pose);
+void currentPoseCallback(const geometry_msgs::PoseWithCovarianceStamped curr_pose);
 void loopClosingCallback(const geometry_msgs::PoseArray::ConstPtr& all_kf_and_pts);
 void getMixMax(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose,
 	geometry_msgs::Point& min_pt, geometry_msgs::Point& max_pt);
@@ -209,6 +218,8 @@ int main(int argc, char **argv){
 
 	norm_factor_x_us = float(cloud_max_x - cloud_min_x - 1) / float(cloud_max_x - cloud_min_x);
 	norm_factor_z_us = float(cloud_max_z - cloud_min_z - 1) / float(cloud_max_z - cloud_min_z);
+	printf("norm_factor_x_us: %f\n", norm_factor_x_us);
+	printf("norm_factor_z_us: %f\n", norm_factor_z_us);
 
 	norm_factor_x = float(grid_res_x - 1) / float(grid_max_x - grid_min_x);
 	norm_factor_z = float(grid_res_z - 1) / float(grid_max_z - grid_min_z);
@@ -223,7 +234,7 @@ int main(int argc, char **argv){
 	ros::Subscriber sub_all_kf_and_pts = nodeHandler.subscribe("all_kf_and_pts", 1000, loopClosingCallback);
 	pub_grid_map = nodeHandler.advertise<nav_msgs::OccupancyGrid>("map", 1000);
 	pub_grid_map_metadata = nodeHandler.advertise<nav_msgs::MapMetaData>("map_metadata", 1000);
-	pub_current_pose = nodeHandler.advertise<geometry_msgs::PoseStamped>("robot_pose", 1000);
+	pub_current_pose = nodeHandler.advertise<geometry_msgs::PoseWithCovarianceStamped>("robot_pose", 1000);
 	pub_initial_pose = nodeHandler.advertise<geometry_msgs::PoseWithCovarianceStamped>("initialpose", 1000, true);
 	pub_goal_path = nodeHandler.advertise<nav_msgs::Path>("goal_path", 1000);
 	pub_command = nodeHandler.advertise<std_msgs::String>("tello/command", 1000);
@@ -297,14 +308,12 @@ void initialPoseCallback(const geometry_msgs::PoseWithCovarianceStamped initial_
 
 	ROS_INFO("DFS initial position index: (%i, %i)\n", int_pos_grid_x, int_pos_grid_z);
 
-	double test = tf::getYaw(init_pose.pose.orientation);
-	cout << "Current Angle: "<< test;
+	double currentAngle = tf::getYaw(init_pose.pose.orientation);
+	cout << "Current Angle: "<< currentAngle;
 	// tfScalar yaw, pitch, roll;
 	// tf::Matrix3x3 mat(q);
 	// mat.getEulerYPR(&yaw, &pitch, &roll);
 
-
-
 	float goal_pos_x =  goal.pose.position.x*scale_factor;
 	float goal_pos_z =  goal.pose.position.y*scale_factor;
 
@@ -317,91 +326,118 @@ void initialPoseCallback(const geometry_msgs::PoseWithCovarianceStamped initial_
 }
 
 
-void currentPoseCallback(const geometry_msgs::PoseStamped init_pose) {
-	float pt_pos_x = init_pose.pose.position.x*scale_factor;
-	float pt_pos_z = init_pose.pose.position.y*scale_factor;
+void currentPoseCallback(const geometry_msgs::PoseWithCovarianceStamped current_pose) {
+	curr_pose = current_pose.pose;
+
+	float pt_pos_x = curr_pose.pose.position.x*scale_factor;
+	float pt_pos_z = curr_pose.pose.position.y*scale_factor;
 
 	int_pos_grid_x = int(floor((pt_pos_x) * norm_factor_x));
 	int_pos_grid_z = int(floor((pt_pos_z) * norm_factor_z));
 
-	ROS_INFO("DFS current position index: (%i, %i)\n", int_pos_grid_x, int_pos_grid_z);
+	double currentAngle = tf::getYaw(curr_pose.pose.orientation);
+	cout << "Current Angle: "<< currentAngle;
 
+	float goal_pos_x =  goal.pose.position.x*scale_factor;
+	float goal_pos_z =  goal.pose.position.y*scale_factor;
+
+	int kf_goal_pos_x = int(floor((goal_pos_x) * norm_factor_x));
+	int kf_goal_pos_z = int(floor((goal_pos_z) * norm_factor_z));
+
+
+	if ((kf_goal_pos_x < 0 || kf_goal_pos_x >= w) || (kf_goal_pos_z < 0 || kf_goal_pos_z >= h)) 
+	{
+		ROS_INFO("Invalid Indices: (%i, %i)\n", kf_goal_pos_x, kf_goal_pos_z);
+		return;
+	}
+
+	if (kf_goal_pos_x == 0  && kf_goal_pos_z == 0){
+		cout << "No goal currently set" << endl;
+		return;
+	}
+
+		// vector<geometry_msgs::Point> BFSpath =  BFS(kf_pos_grid_x, kf_pos_grid_z, kf_goal_pos_x, kf_goal_pos_z);
+	vector<geometry_msgs::Point> BFSpath = BFS(int_pos_grid_x, int_pos_grid_z, kf_goal_pos_x, kf_goal_pos_z);
+
+	printPointPath(BFSpath);
+
+	generatePath(BFSpath);
+
+    returnNextCommand(BFSpath);
+
+
+}
+
+
+void goalCallback(const geometry_msgs::PoseStamped new_goal){
+	goal.pose = new_goal.pose;
+
+	// ROS_INFO("current DFS pose: (%i, %i)\n", kf_pos_grid_x, kf_pos_grid_z);
+	// cv::Size s = grid_map.size();
+	// ROS_INFO("current map size: (%i, %i)\n", s.height, s.width);
+
+	// ROS_INFO("current map value: (%f)\n", grid_map.at<float>(kf_pos_grid_x, kf_pos_grid_z));
 
 	float goal_pos_x =  goal.pose.position.x*scale_factor;
 	float goal_pos_z =  goal.pose.position.y*scale_factor;
 
 
+	
 	int kf_goal_pos_x = int(floor((goal_pos_x) * norm_factor_x));
 	int kf_goal_pos_z = int(floor((goal_pos_z) * norm_factor_z));
 
 	ROS_INFO("DFS goal index: (%i, %i)\n", kf_goal_pos_x, kf_goal_pos_z);
 
+	if ((kf_goal_pos_x < 0 || kf_goal_pos_x >= w) || (kf_goal_pos_z < 0 || kf_goal_pos_z >= h)) 
+	{
+		ROS_INFO("Invalid Indices: (%i, %i)\n", kf_goal_pos_x, kf_goal_pos_z);
+		return;
+	}
+	
+	// vector<geometry_msgs::Point> BFSpath =  BFS(kf_pos_grid_x, kf_pos_grid_z, kf_goal_pos_x, kf_goal_pos_z);
+	vector<geometry_msgs::Point> BFSpath = BFS(int_pos_grid_x, int_pos_grid_z, kf_goal_pos_x, kf_goal_pos_z);
+
+	printPointPath(BFSpath);
+
+	generatePath(BFSpath);
+
+    returnNextCommand(BFSpath);
+
+
+	// ROS_INFO("current map value: (%f)\n", grid_map.at<float>(kf_goal_pos_x, kf_goal_pos_z));
+	// ROS_INFO("DFS goal changed!: (%f, %f)\n", goal.pose.position.x, goal.pose.position.y);
 }
 
-bool isValid(int valid_x, int valid_y) {
-	if (valid_x < 0 || valid_x >= w)
-		return false;
-
-	if (valid_y < 0 || valid_y >= h)
-		return false;
-
-	return true;
-}
-
-// Helper function to convert 2D array of width (numCol) to 1D row-major array coordinates
-int convert2Dto1D(int row, int col, int numCol)
-{
-    return col + numCol * row;
-}
-
-// Check a NxN grid around a point
-bool checkNeighboursWithDepth(std::vector<signed char, std::allocator<signed char> > mat, int range, int x, int y, int numRow, int numCol)
-{ 
-    for(int i = -range; i <= range; i++){
-        for(int j = -range; j <= range; j++){
-            int row = x + i; 
-			int col = y + j;
-            cout << row << ", " << col << " :" << mat[convert2Dto1D(row, col, numCol)];
-            cout << endl;
-            
-            if (!isValid(row, col) || mat[convert2Dto1D(row, col, numCol)] != -1 )
-			{ 
-                return false;
-            }
-
-        }
-    }
-
-	// Return true if destination cannot be reached 
-	return true; 
-}
 
 vector<geometry_msgs::Point>  BFS(int init_x, int init_y, int final_x, int final_y){
-
-	int MIN_PATH_SIZE = 5;
-	int MAX_OCCUPIED_PROB = 50;
+	// int MIN_PATH_SIZE = 5;
+	float MAX_OCCUPIED_PROB = 0.75;
 
 	// These arrays are used to get row and column 
 	// numbers of 4 neighbours of a given cell 
 	int rowNum[] = {-1, 0, 0, 1}; 
 	int colNum[] = {0, -1, 1, 0};
 
-	ROS_INFO("pose start: (%i, %i) end (%i, %i)\n", init_x, init_y,final_x, final_y );
+	ROS_INFO("Start/end indexes: (%i, %i) end (%i, %i)\n", init_x, init_y,final_x, final_y );
 
 
-	grid_map_int = cv::Mat(h, w, CV_8SC1, (char*)(grid_map_msg.data.data()));
+	cv::Mat test_grid_map_int = cv::Mat(h, w, CV_32SC1, (char*)(grid_map_msg.data.data()));
 
-	ROS_INFO("value start: (%f) end: (%f)\n", grid_map.at<float>(init_x, init_y), grid_map.at<float>(final_x, final_y));
-	// ROS_INFO("value start: (%f) end: (%f)\n", grid_map_msg.data.at<float>(init_x, init_y), grid_map_msg.data.at<float>(final_x, final_y));
-	ROS_INFO("value start: (%i) end: (%i)\n", grid_map_int.at<int>(init_x, init_y), grid_map_int.at<int>(final_x, final_y));
-	// ROS_INFO("value start: (%f) end: (%f)\n", grid_map_int.at<float>(init_x, init_y), grid_map_int.at<float>(final_x, final_y));
-	// ROS_INFO("value start: (%f) end: (%f)\n", grid_map_int.at<float>(init_x, init_y), grid_map_int.at<float>(final_x, final_y));
-	// ROS_INFO("value start: (%c) end: (%c)\n", grid_map_int.at<char>(init_x, init_y), grid_map_int.at<char>(final_x, final_y));
+	// ROS_INFO("Float value start: (%f) end: (%f)\n", grid_map.at<float>(init_x, init_y), grid_map.at<float>(final_x, final_y));
+	// ROS_INFO("Float value start int: (%i) end: (%i)\n", grid_map_int.at<int>(init_x, init_y), grid_map_int.at<int>(final_x, final_y));
 
+	// cout << grid_map_int.rowRange(init_y, final_y) << endl;
+	cout << test_grid_map_int.at<int>(init_x, init_y) << endl;
+	cout << test_grid_map_int.at<int>(init_y, init_x) << endl;
+	cout << grid_map_int.row(init_y).col(init_x) << endl;
+	cout << grid_map_int.at<char>(init_x, init_y) << endl;
+	cout << grid_map_int.at<char>(init_y, init_x) << endl;
+	int test = (int)grid_map_int.at<char>(init_y, init_x) ;
 
-	// cout << grid_map_int.rowRange(293, 296) << endl;
+	cout << test << endl;
 
-
+	cv::Mat test2 = test_grid_map_int.row(init_y).col(init_x);
+	cout << test2.at<int>(0, 0) << endl;
 
 	////////////////////////////////////
     vector<geometry_msgs::Point> path; // Store path history
@@ -439,7 +475,8 @@ vector<geometry_msgs::Point>  BFS(int init_x, int init_y, int final_x, int final
 			int col = pt.y + colNum[i]; 
 
 			if (isValid(row, col) 
-				&& 0 <= grid_map_int.at<int>(init_x, init_y) < MAX_OCCUPIED_PROB 
+				&& grid_map.at<float>(row, col) < MAX_OCCUPIED_PROB 
+				// && grid_map_int.at<int>(init_x, init_y) > 0
 				&& visited.at<int>(row, col) != 1)
 			{ 
 				// mark cell as visited and enqueue it 
@@ -458,19 +495,28 @@ vector<geometry_msgs::Point>  BFS(int init_x, int init_y, int final_x, int final
 
 	// Return blank vector if destination cannot be reached 
     // vector<geometry_msgs::Point> noPath; 
-	return path; 
-
-
-	 
+	return path; 	 
 }
 
-void simple_printpath(vector<geometry_msgs::Point>& path) 
+bool isValid(int valid_x, int valid_y) {
+	if (valid_x < 0 || valid_x >= w)
+		return false;
+
+	if (valid_y < 0 || valid_y >= h)
+		return false;
+
+	return true;
+}
+
+void printPointPath(vector<geometry_msgs::Point>& path) 
 { 
     int size = path.size(); 
-	cout << "Path of size " << size << ":"; 
+	cout << "Path of size " << size << ":" << endl; 
 
-    for (int i = 0; i < size; i++)  
-		cout << path[i].x << "," << path[i].y << endl;     
+    for (int i = 0; i < size; i++)  {
+		cout << path[i].x << "," << path[i].y << " occint%: " << grid_map_int.at<int>(path[i].x , path[i].y) ;    
+		cout << " occ%: " << grid_map.at<float>(path[i].x , path[i].y) <<  endl;    
+	}
     cout << endl; 
 } 
 
@@ -478,17 +524,17 @@ void simple_printpath(vector<geometry_msgs::Point>& path)
 void returnNextCommand(vector<geometry_msgs::Point>& path)
 {
 	// For now: manually set 2D pose est and 2d nav goal
-	cout << path[1].x << "," << path[0].x << endl;   
-	cout << path[1].y << "," << path[0].y << endl;   
+	// cout << "X_indices: " << path[1].x << "," << path[0].x << endl;   
+	// cout << "Y_indices: " << path[1].y << "," << path[0].y << endl;   
 	
 	int x_diff =  path[1].x - path[0].x;
 	int y_diff =  path[1].y - path[0].y;
 	
-	cout << "First and Second: ";
-	cout << "x_diff: " << x_diff << ", y_diff: " << y_diff << endl;
+	// cout << "First and Second: ";
+	// cout << "x_diff: " << x_diff << ", y_diff: " << y_diff << endl;
 
-	float pt_pos_x = init_pose.pose.position.x;
-	float pt_pos_z = init_pose.pose.position.y;
+	float pt_pos_x = curr_pose.pose.position.x;
+	float pt_pos_z = curr_pose.pose.position.y;
 
 	// curr_pose.pose.orientation.x = kf_orientation.x;
 	// curr_pose.pose.orientation.y = kf_orientation.z;
@@ -496,7 +542,7 @@ void returnNextCommand(vector<geometry_msgs::Point>& path)
 	// curr_pose.pose.orientation.w = -kf_orientation.w;
 
 
-	double currentAngle = tf::getYaw(init_pose.pose.orientation);
+	double currentAngle = tf::getYaw(curr_pose.pose.orientation);
 
 
 	double desiredAngle = currentAngle;
@@ -510,31 +556,42 @@ void returnNextCommand(vector<geometry_msgs::Point>& path)
 	} else if(y_diff == -1){
 		desiredAngle = - M_PI / 2;
 	}
-    cout << "Current Angle: "<< currentAngle << "Desired Angle: "<< desiredAngle << " .";
+    // cout << "Current Angle: "<< currentAngle << "Desired Angle: "<< desiredAngle << " ." << endl;
 
-	// CCW angle needed 
+	// CCW angle is positive 
 	int AngleDiff = int((desiredAngle - currentAngle) * 180 / M_PI);
 
-	cout << "angle_diff: " << AngleDiff << endl; 
+	// cout << "angle_diff: " << AngleDiff << endl; 
 
+	AngleDiff -= 360. * std::floor((AngleDiff + 180.) * (1. / 360.));
+
+	// cout << "angle_diff wrap: " << AngleDiff << endl; 
+
+	// Generate ROS String
 	std_msgs::String msg;
 	std::stringstream ss;
-	ss << "rotate " << AngleDiff;
+	if (AngleDiff >= 0) {
+		ss << "ccw " << AngleDiff;
+	} else {
+		ss << "cw " << -AngleDiff;
+	}
 	msg.data = ss.str();
+	cout << ss.str() << endl;
 	pub_command.publish(msg);
 
-	cout << "init_pose:" << pt_pos_x << ", " << pt_pos_z << endl;
 
 	float world_x = (path[1].x) / (norm_factor_x * scale_factor);
 	float world_y = (path[1].y) / (norm_factor_z * scale_factor);
 
-	cout << "final_pose:" << world_x << ", " << world_y << endl;
+	// cout << "init_pose:" << pt_pos_x << ", " << pt_pos_z << endl;
+	// cout << "final_pose:" << world_x << ", " << world_y << endl;
 }
+
 
 void generatePath(vector<geometry_msgs::Point>& path) 
 { 
     int size = path.size();
-	cout << "Path of size " << size << ":"; 
+	cout << "World frame path of size " << size << ":" << endl; 
 
 	nav_msgs::Path local_goal_path;
     for (int i = 0; i < size; i++) {
@@ -543,13 +600,13 @@ void generatePath(vector<geometry_msgs::Point>& path)
 		path_pose_stamped.header.stamp = ros::Time::now();
 		path_pose_stamped.header.seq = i;
 
-		// cout << path[i].x << "," << path[i].y << " == ";     
 
 		path_pose_stamped.pose.position.x = float((path[i].x) / (norm_factor_x * scale_factor));
 		// path_pose_stamped.pose.y = 	0
-		path_pose_stamped.pose.position.y = (path[i].y) / (norm_factor_z * scale_factor);
+		path_pose_stamped.pose.position.y = float((path[i].y) / (norm_factor_z * scale_factor));
 
-		cout << path_pose_stamped.pose.position.x << "," << path_pose_stamped.pose.position.z  << endl;     
+		// cout << path[i].x << "," << path[i].y << " == ";     
+		// cout << path_pose_stamped.pose.position.x << "," << path_pose_stamped.pose.position.y  << endl;     
 
 		// path_pose_stamped.pose.w = 	0
 		local_goal_path.poses.push_back(path_pose_stamped);
@@ -564,50 +621,7 @@ void generatePath(vector<geometry_msgs::Point>& path)
 } 
 
 
-void goalCallback(const geometry_msgs::PoseStamped new_goal){
 
-
-	goal.pose = new_goal.pose;
-
-	// ROS_INFO("current DFS pose: (%i, %i)\n", kf_pos_grid_x, kf_pos_grid_z);
-	// cv::Size s = grid_map.size();
-	// ROS_INFO("current map size: (%i, %i)\n", s.height, s.width);
-
-	// ROS_INFO("current map value: (%f)\n", grid_map.at<float>(kf_pos_grid_x, kf_pos_grid_z));
-
-	float goal_pos_x =  goal.pose.position.x*scale_factor;
-	float goal_pos_z =  goal.pose.position.y*scale_factor;
-
-
-	
-	int kf_goal_pos_x = int(floor((goal_pos_x) * norm_factor_x));
-	int kf_goal_pos_z = int(floor((goal_pos_z) * norm_factor_z));
-
-	ROS_INFO("DFS goal index: (%i, %i)\n", kf_goal_pos_x, kf_goal_pos_z);
-
-	if (kf_goal_pos_x < 0 || kf_goal_pos_x >= w)
-		return;
-
-	if (kf_goal_pos_z < 0 || kf_goal_pos_z >= h)
-		return;
-
-
-
-
-
-	// vector<geometry_msgs::Point> BFSpath =  BFS(kf_pos_grid_x, kf_pos_grid_z, kf_goal_pos_x, kf_goal_pos_z);
-	vector<geometry_msgs::Point> BFSpath =  BFS(int_pos_grid_x, int_pos_grid_z, kf_goal_pos_x, kf_goal_pos_z);
-
-	// simple_printpath(BFSpath);
-
-	generatePath(BFSpath);
-
-    returnNextCommand(BFSpath);
-
-
-	// ROS_INFO("current map value: (%f)\n", grid_map.at<float>(kf_goal_pos_x, kf_goal_pos_z));
-	// ROS_INFO("DFS goal changed!: (%f, %f)\n", goal.pose.position.x, goal.pose.position.y);
-}
 
 void ptCallback(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose){
 	//ROS_INFO("Received points and pose: [%s]{%d}", pts_and_pose->header.frame_id.c_str(),
@@ -650,15 +664,20 @@ void ptCallback(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose){
 //	double curr_time = std::chrono::duration_cast<std::chrono::duration<double>>(start_time - end_time).count();
 
 	grid_map_msg.info.map_load_time = ros::Time::now();
-	float kf_pos_grid_x_us = (kf_location.x - cloud_min_x) * norm_factor_x_us;
+	float kf_pos_grid_x_us = (kf_location.x - cloud_min_x) ;
 	// float kf_pos_grid_x_us = (kf_location.x) * norm_factor_x_us;
-	float kf_pos_grid_z_us = (kf_location.z - cloud_min_z) * norm_factor_z_us;
+	float kf_pos_grid_z_us = (kf_location.z - cloud_min_z) ;
 	// float kf_pos_grid_z_us = (kf_location.z) * norm_factor_z_us;
 
 
 	curr_pose.pose.position.x = kf_pos_grid_x_us;
 	curr_pose.pose.position.y = kf_pos_grid_z_us;
-	// ROS_INFO("Publishing current pose: (%f, %f)\n", kf_pos_grid_x_us, kf_pos_grid_z_us);
+
+	// curr_pose.pose.position.x  = kf_pos_grid_x*resize_factor;
+	// curr_pose.pose.position.y = kf_pos_grid_z*resize_factor;
+	ROS_INFO("Publishing current pose: (%f, %f)\n", kf_pos_grid_x_us, kf_pos_grid_z_us);
+	ROS_INFO("Publishing current pose: (%f, %f)\n", kf_location.x , kf_location.z);
+	ROS_INFO("Publishing new current pose: (%f, %f)\n", kf_pos_grid_x*resize_factor, kf_pos_grid_z*resize_factor);
 	curr_pose.pose.position.z = 0;
 	// curr_pose.pose.orientation = kf_orientation;
 	curr_pose.pose.orientation.x = kf_orientation.x;
