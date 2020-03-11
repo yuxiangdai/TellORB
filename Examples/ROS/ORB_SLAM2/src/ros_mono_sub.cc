@@ -335,6 +335,7 @@ void currentPoseCallback(const geometry_msgs::PoseWithCovarianceStamped current_
 	int_pos_grid_x = int(floor((pt_pos_x) * norm_factor_x));
 	int_pos_grid_z = int(floor((pt_pos_z) * norm_factor_z));
 
+	cout << "Current index: " << int_pos_grid_x << ", " << int_pos_grid_z << endl;
 	double currentAngle = tf::getYaw(curr_pose.pose.orientation);
 	cout << "Current Angle: "<< currentAngle;
 
@@ -357,13 +358,13 @@ void currentPoseCallback(const geometry_msgs::PoseWithCovarianceStamped current_
 	}
 
 		// vector<geometry_msgs::Point> BFSpath =  BFS(kf_pos_grid_x, kf_pos_grid_z, kf_goal_pos_x, kf_goal_pos_z);
-	vector<geometry_msgs::Point> BFSpath = BFS(int_pos_grid_x, int_pos_grid_z, kf_goal_pos_x, kf_goal_pos_z);
+	// vector<geometry_msgs::Point> BFSpath = BFS(int_pos_grid_x, int_pos_grid_z, kf_goal_pos_x, kf_goal_pos_z);
 
-	printPointPath(BFSpath);
+	// printPointPath(BFSpath);
 
-	generatePath(BFSpath);
+	// generatePath(BFSpath);
 
-    returnNextCommand(BFSpath);
+    // returnNextCommand(BFSpath);
 
 
 }
@@ -427,17 +428,17 @@ vector<geometry_msgs::Point>  BFS(int init_x, int init_y, int final_x, int final
 	// ROS_INFO("Float value start int: (%i) end: (%i)\n", grid_map_int.at<int>(init_x, init_y), grid_map_int.at<int>(final_x, final_y));
 
 	// cout << grid_map_int.rowRange(init_y, final_y) << endl;
-	cout << test_grid_map_int.at<int>(init_x, init_y) << endl;
-	cout << test_grid_map_int.at<int>(init_y, init_x) << endl;
-	cout << grid_map_int.row(init_y).col(init_x) << endl;
-	cout << grid_map_int.at<char>(init_x, init_y) << endl;
-	cout << grid_map_int.at<char>(init_y, init_x) << endl;
+	// cout << test_grid_map_int.at<int>(init_x, init_y) << endl;
+	// cout << test_grid_map_int.at<int>(init_y, init_x) << endl;
+	// cout << grid_map_int.row(init_y).col(init_x) << endl;
+	// cout << grid_map_int.at<char>(init_x, init_y) << endl;
+	// cout << grid_map_int.at<char>(init_y, init_x) << endl;
 	int test = (int)grid_map_int.at<char>(init_y, init_x) ;
 
 	cout << test << endl;
 
-	cv::Mat test2 = test_grid_map_int.row(init_y).col(init_x);
-	cout << test2.at<int>(0, 0) << endl;
+	// cv::Mat test2 = test_grid_map_int.row(init_y).col(init_x);
+	// cout << test2.at<int>(0, 0) << endl;
 
 	////////////////////////////////////
     vector<geometry_msgs::Point> path; // Store path history

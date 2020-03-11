@@ -46,7 +46,7 @@
 
 //! parameters
 bool read_from_topic = false, read_from_camera = false;
-std::string image_topic = "/camera/image_raw";
+std::string image_topic = "/tello/image_raw";
 int all_pts_pub_gap = 0;
 bool show_viewer = true;
 
