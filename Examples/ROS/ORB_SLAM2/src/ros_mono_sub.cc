@@ -130,6 +130,7 @@ void returnNextCommand(vector<geometry_msgs::Point>& path);
 void generatePath(vector<geometry_msgs::Point>& path);
 void printPointPath(vector<geometry_msgs::Point>& path);
 void publishCommand(std::string command);
+ros::Time next_command_time;
 
 // ORBSLAM functions
 void updateGridMap(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose);
@@ -529,6 +530,37 @@ void printPointPath(vector<geometry_msgs::Point>& path)
     cout << endl; 
 } 
 
+void generatePath(vector<geometry_msgs::Point>& path) 
+{ 
+    int size = path.size();
+	// cout << "World frame path of size " << size << " generated" << endl; 
+
+	nav_msgs::Path local_goal_path;
+    for (int i = 0; i < size; i++) {
+		geometry_msgs::PoseStamped path_pose_stamped;
+		path_pose_stamped.header.frame_id = "map";
+		path_pose_stamped.header.stamp = ros::Time::now();
+		path_pose_stamped.header.seq = i;
+
+
+		path_pose_stamped.pose.position.x = float((path[i].x) / (norm_factor_x * scale_factor));
+		// path_pose_stamped.pose.y = 	0
+		path_pose_stamped.pose.position.y = float((path[i].y) / (norm_factor_z * scale_factor));
+
+		// cout << path[i].x << "," << path[i].y << " == ";     
+		// cout << path_pose_stamped.pose.position.x << "," << path_pose_stamped.pose.position.y  << endl;     
+
+		// path_pose_stamped.pose.w = 	0
+		local_goal_path.poses.push_back(path_pose_stamped);
+	}
+
+
+	goal_path.header.frame_id = "map";
+	goal_path.header.stamp = ros::Time::now();
+	goal_path.header.seq = ++curr_path_id;
+	goal_path.poses = local_goal_path.poses;
+	pub_goal_path.publish(goal_path);
+} 
 
 void returnNextCommand(vector<geometry_msgs::Point>& path)
 {
@@ -575,19 +607,23 @@ void returnNextCommand(vector<geometry_msgs::Point>& path)
 	AngleDiff -= 360. * std::floor((AngleDiff + 180.) * (1. / 360.));
 
 	cout << "angle_diff wrap: " << AngleDiff << endl; 
+	cout << "path size: " << path.size() << endl; 
 
+	if(ros::Time::now() > next_command_time){
+		cout << ros::Time::now() << endl;
 
-	if(path.size() < 6) {
-		publishCommand("land");
+		if(path.size() < 6) {
+			publishCommand("land");
+		}
+		else if (AngleDiff >= 90) {
+			publishCommand("ccw");
+		} else if (AngleDiff <= -90) {
+			publishCommand("cw");
+		} else {
+			publishCommand("forward");
+		}
 	}
-	// Generate ROS String
-	if (AngleDiff >= 90) {
-		publishCommand("ccw");
-	} else if (AngleDiff <= -90) {
-		publishCommand("cw");
-	}
 
-	publishCommand("forward");
 
 
 	float world_x = (path[1].x) / (norm_factor_x * scale_factor);
@@ -609,42 +645,9 @@ void publishCommand(std::string command){
 	msg.data = ss.str();
 	cout << "Publish Command: " << ss.str() << endl;
 	pub_command.publish(msg);
+
+	next_command_time = ros::Time::now() + ros::Duration(5);
 }
-
-void generatePath(vector<geometry_msgs::Point>& path) 
-{ 
-    int size = path.size();
-	cout << "World frame path of size " << size << " generated" << endl; 
-
-	nav_msgs::Path local_goal_path;
-    for (int i = 0; i < size; i++) {
-		geometry_msgs::PoseStamped path_pose_stamped;
-		path_pose_stamped.header.frame_id = "map";
-		path_pose_stamped.header.stamp = ros::Time::now();
-		path_pose_stamped.header.seq = i;
-
-
-		path_pose_stamped.pose.position.x = float((path[i].x) / (norm_factor_x * scale_factor));
-		// path_pose_stamped.pose.y = 	0
-		path_pose_stamped.pose.position.y = float((path[i].y) / (norm_factor_z * scale_factor));
-
-		// cout << path[i].x << "," << path[i].y << " == ";     
-		// cout << path_pose_stamped.pose.position.x << "," << path_pose_stamped.pose.position.y  << endl;     
-
-		// path_pose_stamped.pose.w = 	0
-		local_goal_path.poses.push_back(path_pose_stamped);
-	}
-
-
-	goal_path.header.frame_id = "map";
-	goal_path.header.stamp = ros::Time::now();
-	goal_path.header.seq = ++curr_path_id;
-	goal_path.poses = local_goal_path.poses;
-	pub_goal_path.publish(goal_path);
-} 
-
-
-
 
 void ptCallback(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose){
 	//ROS_INFO("Received points and pose: [%s]{%d}", pts_and_pose->header.frame_id.c_str(),
