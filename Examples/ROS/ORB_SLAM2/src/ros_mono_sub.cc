@@ -399,7 +399,7 @@ void goalCallback(const geometry_msgs::PoseStamped new_goal){
 	// vector<geometry_msgs::Point> BFSpath =  BFS(kf_pos_grid_x, kf_pos_grid_z, kf_goal_pos_x, kf_goal_pos_z);
 	vector<geometry_msgs::Point> BFSpath = BFS(int_pos_grid_x, int_pos_grid_z, kf_goal_pos_x, kf_goal_pos_z);
 
-	printPointPath(BFSpath);
+	// printPointPath(BFSpath);
 
 	generatePath(BFSpath);
 
@@ -413,7 +413,7 @@ void goalCallback(const geometry_msgs::PoseStamped new_goal){
 
 vector<geometry_msgs::Point>  BFS(int init_x, int init_y, int final_x, int final_y){
 	// int MIN_PATH_SIZE = 5;
-	float MAX_OCCUPIED_PROB = 0.75;
+	int MAX_OCCUPIED_PROB = 75;
 
 	// These arrays are used to get row and column 
 	// numbers of 4 neighbours of a given cell 
@@ -434,12 +434,16 @@ vector<geometry_msgs::Point>  BFS(int init_x, int init_y, int final_x, int final
 	// cout << grid_map_int.row(init_y).col(init_x) << endl;
 	// cout << grid_map_int.at<char>(init_x, init_y) << endl;
 	// cout << grid_map_int.at<char>(init_y, init_x) << endl;
-	int test = (int)grid_map_int.at<char>(init_y, init_x) ;
+	// int test = (int)grid_map_int.at<char>(init_y, init_x) ;
 
-	cout << test << endl;
+	// cout << "test" << test << endl;
+	// test = (int)grid_map_int.at<char>(init_y + 1, init_x + 1) ;
 
-	// cv::Mat test2 = test_grid_map_int.row(init_y).col(init_x);
-	// cout << test2.at<int>(0, 0) << endl;
+	// cout << "test2" << test << endl;
+
+
+	// // cv::Mat test2 = test_grid_map_int.row(init_y).col(init_x);
+	// // cout << test2.at<int>(0, 0) << endl;
 
 	////////////////////////////////////
     vector<geometry_msgs::Point> path; // Store path history
@@ -473,19 +477,20 @@ vector<geometry_msgs::Point>  BFS(int init_x, int init_y, int final_x, int final
 
 		for (int i = 0; i < 4; i++) 
 		{ 
-			int row = pt.x + rowNum[i]; 
-			int col = pt.y + colNum[i]; 
+			int col = pt.x + rowNum[i]; 
+			int row = pt.y + colNum[i]; 
 
+			int probability = (int)grid_map_int.at<char>(row, col);
 			if (isValid(row, col) 
-				&& grid_map.at<float>(row, col) < MAX_OCCUPIED_PROB 
-				// && grid_map_int.at<int>(init_x, init_y) > 0
+				&& probability < MAX_OCCUPIED_PROB 
+				&& probability >= 0 
 				&& visited.at<int>(row, col) != 1)
 			{ 
 				// mark cell as visited and enqueue it 
 				visited.at<int>(row, col) = 1;
 				geometry_msgs::Point newPoint;
-				newPoint.x = row;
-				newPoint.y = col;
+				newPoint.x = col;
+				newPoint.y = row;
 
                 vector<geometry_msgs::Point> newpath(path);
                 newpath.push_back(newPoint); 
@@ -516,8 +521,10 @@ void printPointPath(vector<geometry_msgs::Point>& path)
 	cout << "Path of size " << size << ":" << endl; 
 
     for (int i = 0; i < size; i++)  {
-		cout << path[i].x << "," << path[i].y << " occint%: " << grid_map_int.at<int>(path[i].x , path[i].y) ;    
-		cout << " occ%: " << grid_map.at<float>(path[i].x , path[i].y) <<  endl;    
+		cout << path[i].x << "," << path[i].y;    
+		int probability = (int)grid_map_int.at<char>(path[i].y, path[i].x );
+
+		cout << " occ%: " << probability <<  endl;    
 	}
     cout << endl; 
 } 
@@ -567,22 +574,20 @@ void returnNextCommand(vector<geometry_msgs::Point>& path)
 
 	AngleDiff -= 360. * std::floor((AngleDiff + 180.) * (1. / 360.));
 
-	// cout << "angle_diff wrap: " << AngleDiff << endl; 
+	cout << "angle_diff wrap: " << AngleDiff << endl; 
 
-	// Generate ROS String
-	std_msgs::String msg;
-	std::stringstream ss;
-	if (AngleDiff >= 0) {
-		ss << "ccw " << AngleDiff;
-	} else {
-		ss << "cw " << -AngleDiff;
+
+	if(path.size() < 6) {
+		publishCommand("land");
 	}
-	msg.data = ss.str();
-	cout << ss.str() << endl;
-	pub_command.publish(msg);
+	// Generate ROS String
+	if (AngleDiff >= 90) {
+		publishCommand("ccw");
+	} else if (AngleDiff <= -90) {
+		publishCommand("cw");
+	}
 
-	// TODO: add wait time, then publish forward message
-	// publishCommand("test");
+	publishCommand("forward");
 
 
 	float world_x = (path[1].x) / (norm_factor_x * scale_factor);
@@ -592,19 +597,24 @@ void returnNextCommand(vector<geometry_msgs::Point>& path)
 	// cout << "final_pose:" << world_x << ", " << world_y << endl;
 }
 
+
+// void sendCommandsInOrder(vector<std_msgs::String> cmds) {
+	
+// }
+
 void publishCommand(std::string command){
 	std_msgs::String msg;
 	std::stringstream ss;
 	ss << command;
 	msg.data = ss.str();
-	cout << ss.str() << endl;
+	cout << "Publish Command: " << ss.str() << endl;
 	pub_command.publish(msg);
 }
 
 void generatePath(vector<geometry_msgs::Point>& path) 
 { 
     int size = path.size();
-	cout << "World frame path of size " << size << ":" << endl; 
+	cout << "World frame path of size " << size << " generated" << endl; 
 
 	nav_msgs::Path local_goal_path;
     for (int i = 0; i < size; i++) {
