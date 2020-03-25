@@ -25,6 +25,8 @@
 #include<chrono>
 #include <time.h>
 
+#include <image_transport/image_transport.h>
+
 #include<ros/ros.h>
 #include <cv_bridge/cv_bridge.h>
 #include "sensor_msgs/PointCloud2.h"
@@ -46,7 +48,7 @@
 
 //! parameters
 bool read_from_topic = false, read_from_camera = false;
-std::string image_topic = "/tello/image_raw";
+std::string image_topic = "/camera/image_raw"; // change to /tello
 int all_pts_pub_gap = 0;
 bool show_viewer = true;
 
@@ -61,7 +63,9 @@ void LoadImages(const string &strSequence, vector<string> &vstrImageFilenames,
 	vector<double> &vTimestamps);
 inline bool isInteger(const std::string & s);
 void publish(ORB_SLAM2::System &SLAM, ros::Publisher &pub_pts_and_pose,
-	ros::Publisher &pub_all_kf_and_pts, int frame_id);
+	ros::Publisher &pub_all_kf_and_pts, int frame_id, cv::Mat &im);
+
+image_transport::Publisher pub_image;
 
 class ImageGrabber{
 public:
@@ -95,6 +99,9 @@ int main(int argc, char **argv){
 	//ros::Publisher pub_cloud = nodeHandler.advertise<sensor_msgs::PointCloud2>("cloud_in", 1000);
 	ros::Publisher pub_pts_and_pose = nodeHandler.advertise<geometry_msgs::PoseArray>("pts_and_pose", 1000);
 	ros::Publisher pub_all_kf_and_pts = nodeHandler.advertise<geometry_msgs::PoseArray>("all_kf_and_pts", 1000);
+	
+	image_transport::ImageTransport it(nodeHandler);
+	pub_image = it.advertise("orb_camera/image", 1);
 	if (read_from_topic) {
 		ImageGrabber igb(SLAM, pub_pts_and_pose, pub_all_kf_and_pts);
 		ros::Subscriber sub = nodeHandler.subscribe(image_topic, 1, &ImageGrabber::GrabImage, &igb);
@@ -134,7 +141,7 @@ int main(int argc, char **argv){
 			// Pass the image to the SLAM system
 			cv::Mat curr_pose = SLAM.TrackMonocular(im, tframe);
 
-			publish(SLAM, pub_pts_and_pose, pub_all_kf_and_pts, frame_id);
+			publish(SLAM, pub_pts_and_pose, pub_all_kf_and_pts, frame_id, im);
 
 			++frame_id;
 
@@ -172,7 +179,7 @@ int main(int argc, char **argv){
 }
 
 void publish(ORB_SLAM2::System &SLAM, ros::Publisher &pub_pts_and_pose,
-	ros::Publisher &pub_all_kf_and_pts, int frame_id) {
+	ros::Publisher &pub_all_kf_and_pts, int frame_id, cv::Mat &image) {
 	if (all_pts_pub_gap > 0 && pub_count >= all_pts_pub_gap) {
 		pub_all_pts = true;
 		pub_count = 0;
@@ -239,9 +246,9 @@ void publish(ORB_SLAM2::System &SLAM, ros::Publisher &pub_pts_and_pose,
 		kf_pt_array.poses[0].position.x = (double)n_kf;
 		kf_pt_array.poses[0].position.y = (double)n_kf;
 		kf_pt_array.poses[0].position.z = (double)n_kf;
-		kf_pt_array.header.frame_id = "1";
+		kf_pt_array.header.frame_id = "/map";
 		kf_pt_array.header.seq = frame_id + 1;
-		printf("Publishing data for %u keyfranmes\n", n_kf);
+		printf("Publishing data for %u keyframes\n", n_kf);
 		pub_all_kf_and_pts.publish(kf_pt_array);
 	}
 	else if (SLAM.getTracker()->mCurrentFrame.is_keyframe) {
@@ -325,14 +332,25 @@ void publish(ORB_SLAM2::System &SLAM, ros::Publisher &pub_pts_and_pose,
 		//ros_cloud.header.frame_id = "1";
 		//ros_cloud.header.seq = ni;
 
-		//printf("valid map pts: %lu\n", pt_array.poses.size()-1);
+		// printf("frame_id: %d \n",  frame_id + 1);
 
 		//printf("ros_cloud size: %d x %d\n", ros_cloud.height, ros_cloud.width);
 		//pub_cloud.publish(ros_cloud);
-		pt_array.header.frame_id = "1";
+		pt_array.header.frame_id = "/map";
 		pt_array.header.seq = frame_id + 1;
 		pub_pts_and_pose.publish(pt_array);
-		//pub_kf.publish(camera_pose);
+
+		printf("valid map pts: %lu\n", pt_array.poses.size());
+
+		if (pt_array.poses.size() > 300){
+			printf("valid map pts: %lu\n", pt_array.poses.size());
+			// cv::imshow("image", image);
+			// cv::waitKey(1);
+			// cv::destroyAllWindows();
+			sensor_msgs::ImagePtr msg;
+			msg = cv_bridge::CvImage(std_msgs::Header(), "mono8", image).toImageMsg();
+			pub_image.publish(msg);
+		}
 	}
 }
 
@@ -384,8 +402,9 @@ void ImageGrabber::GrabImage(const sensor_msgs::ImageConstPtr& msg){
 		ROS_ERROR("cv_bridge exception: %s", e.what());
 		return;
 	}
+	cv::Mat im = cv_ptr->image;
 	SLAM.TrackMonocular(cv_ptr->image, cv_ptr->header.stamp.toSec());
-	publish(SLAM, pub_pts_and_pose, pub_all_kf_and_pts, frame_id);
+	publish(SLAM, pub_pts_and_pose, pub_all_kf_and_pts, frame_id, im);
 	++frame_id;
 }
 

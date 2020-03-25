@@ -138,6 +138,7 @@ void resetGridMap(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose);
 void cloudCallback(const sensor_msgs::PointCloud2::ConstPtr& pt_cloud);
 void kfCallback(const geometry_msgs::PoseStamped::ConstPtr& camera_pose);
 void saveMap(unsigned int id = 0);
+void imageCallback(const sensor_msgs::ImageConstPtr& msg);
 void ptCallback(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose);
 void goalCallback(const geometry_msgs::PoseStamped new_goal);
 void initialPoseCallback(const geometry_msgs::PoseWithCovarianceStamped initial_pose);
@@ -258,7 +259,7 @@ int main(int argc, char **argv){
 
 	//ros::Subscriber sub_cloud = nodeHandler.subscribe("cloud_in", 1000, cloudCallback);
 	//ros::Subscriber sub_kf = nodeHandler.subscribe("camera_pose", 1000, kfCallback);
-	//ros::Subscriber sub = nodeHandler.subscribe("/camera/image_raw", 1, &ImageGrabber::GrabImage, &igb);
+	// ros::Subscriber sub_image = nodeHandler.subscribe("/camera/image_raw", 1, imageCallback);
 
 	cv::namedWindow("grid_map_thresh_resized", CV_WINDOW_NORMAL);
 	cv::namedWindow("grid_map_msg", CV_WINDOW_NORMAL);
@@ -271,6 +272,20 @@ int main(int argc, char **argv){
 	// saveMap(); 
 
 	return 0;
+}
+
+// Unused in testing
+void imageCallback(const sensor_msgs::ImageConstPtr& msg)
+{
+  try
+  {
+    cv::imshow("view", cv_bridge::toCvShare(msg, "bgr8")->image);
+    cv::waitKey(30);
+  }
+  catch (cv_bridge::Exception& e)
+  {
+    ROS_ERROR("Could not convert from '%s' to 'bgr8'.", msg->encoding.c_str());
+  }
 }
 
 void cloudCallback(const sensor_msgs::PointCloud2::ConstPtr& pt_cloud){
@@ -329,7 +344,6 @@ void initialPoseCallback(const geometry_msgs::PoseWithCovarianceStamped initial_
 
 }
 
-
 void currentPoseCallback(const geometry_msgs::PoseWithCovarianceStamped current_pose) {
 	curr_pose = current_pose.pose;
 
@@ -371,7 +385,6 @@ void currentPoseCallback(const geometry_msgs::PoseWithCovarianceStamped current_
 
 }
 
-
 void goalCallback(const geometry_msgs::PoseStamped new_goal){
 	goal.pose = new_goal.pose;
 
@@ -410,7 +423,6 @@ void goalCallback(const geometry_msgs::PoseStamped new_goal){
 	// ROS_INFO("current map value: (%f)\n", grid_map.at<float>(kf_goal_pos_x, kf_goal_pos_z));
 	// ROS_INFO("DFS goal changed!: (%f, %f)\n", goal.pose.position.x, goal.pose.position.y);
 }
-
 
 vector<geometry_msgs::Point>  BFS(int init_x, int init_y, int final_x, int final_y){
 	// int MIN_PATH_SIZE = 5;
