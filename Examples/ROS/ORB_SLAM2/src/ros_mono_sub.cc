@@ -268,7 +268,7 @@ int main(int argc, char **argv){
 	ros::spin();
 	ros::shutdown();
 	cv::destroyAllWindows();
-	saveMap();
+	// saveMap(); 
 
 	return 0;
 }
