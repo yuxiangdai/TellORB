@@ -52,6 +52,9 @@ std::string image_topic = "/camera/image_raw"; // change to /tello
 int all_pts_pub_gap = 0;
 bool show_viewer = true;
 
+
+vector<cv::Mat> vFeaturedImages;
+
 vector<string> vstrImageFilenames;
 vector<double> vTimestamps;
 cv::VideoCapture cap_obj;
@@ -340,15 +343,19 @@ void publish(ORB_SLAM2::System &SLAM, ros::Publisher &pub_pts_and_pose,
 		pt_array.header.seq = frame_id + 1;
 		pub_pts_and_pose.publish(pt_array);
 
-		printf("valid map pts: %lu\n", pt_array.poses.size());
+		// printf("valid map pts: %lu\n", pt_array.poses.size());
 
-		if (pt_array.poses.size() > 300){
+		if (pt_array.poses.size() > 250){
 			printf("valid map pts: %lu\n", pt_array.poses.size());
 			// cv::imshow("image", image);
 			// cv::waitKey(1);
 			// cv::destroyAllWindows();
+			vFeaturedImages.push_back(image);
+
+			cv::Mat & lastFeaturedImage = vFeaturedImages[vFeaturedImages.size() - 1];
+
 			sensor_msgs::ImagePtr msg;
-			msg = cv_bridge::CvImage(std_msgs::Header(), "mono8", image).toImageMsg();
+			msg = cv_bridge::CvImage(std_msgs::Header(), "mono8", lastFeaturedImage).toImageMsg();
 			pub_image.publish(msg);
 		}
 	}
