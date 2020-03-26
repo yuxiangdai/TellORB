@@ -20,6 +20,8 @@
 #include <pcl_conversions/pcl_conversions.h>
 
 #include<opencv2/core/core.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
+
 
 #include <opencv2/highgui/highgui_c.h>
 #include <opencv2/highgui/highgui.hpp>
@@ -104,6 +106,9 @@ geometry_msgs::PoseStamped goal;
 geometry_msgs::PoseWithCovariance init_pose, curr_pose;
 
 nav_msgs::Path goal_path;
+
+cv::Mat img_final;
+
 
 //#ifdef COMPILEDWITHC11
 //std::chrono::steady_clock::time_point start_time, end_time;
@@ -413,7 +418,7 @@ void goalCallback(const geometry_msgs::PoseStamped new_goal){
 	// vector<geometry_msgs::Point> BFSpath =  BFS(kf_pos_grid_x, kf_pos_grid_z, kf_goal_pos_x, kf_goal_pos_z);
 	vector<geometry_msgs::Point> BFSpath = BFS(int_pos_grid_x, int_pos_grid_z, kf_goal_pos_x, kf_goal_pos_z);
 
-	// printPointPath(BFSpath);
+	printPointPath(BFSpath);
 
 	generatePath(BFSpath);
 
@@ -436,27 +441,29 @@ vector<geometry_msgs::Point>  BFS(int init_x, int init_y, int final_x, int final
 	ROS_INFO("Start/end indexes: (%i, %i) end (%i, %i)\n", init_x, init_y,final_x, final_y );
 
 
-	cv::Mat test_grid_map_int = cv::Mat(h, w, CV_32SC1, (char*)(grid_map_msg.data.data()));
+	cv::Mat test_grid_map_int = cv::Mat(h, w, CV_16SC1, (char*)(grid_map_msg.data.data()));
+	// cv::Mat test_grid_map_int;
 
-	// ROS_INFO("Float value start: (%f) end: (%f)\n", grid_map.at<float>(init_x, init_y), grid_map.at<float>(final_x, final_y));
-	// ROS_INFO("Float value start int: (%i) end: (%i)\n", grid_map_int.at<int>(init_x, init_y), grid_map_int.at<int>(final_x, final_y));
-
-	// cout << grid_map_int.rowRange(init_y, final_y) << endl;
-	// cout << test_grid_map_int.at<int>(init_x, init_y) << endl;
-	// cout << test_grid_map_int.at<int>(init_y, init_x) << endl;
-	// cout << grid_map_int.row(init_y).col(init_x) << endl;
-	// cout << grid_map_int.at<char>(init_x, init_y) << endl;
-	// cout << grid_map_int.at<char>(init_y, init_x) << endl;
-	// int test = (int)grid_map_int.at<char>(init_y, init_x) ;
-
-	// cout << "test" << test << endl;
-	// test = (int)grid_map_int.at<char>(init_y + 1, init_x + 1) ;
-
-	// cout << "test2" << test << endl;
+    cv::Mat img_first;
 
 
-	// // cv::Mat test2 = test_grid_map_int.row(init_y).col(init_x);
-	// // cout << test2.at<int>(0, 0) << endl;
+	double minval,maxval;
+	cv::minMaxLoc(grid_map_int, &minval, &maxval, NULL, NULL);
+
+
+	// cout << grid_map_int.type() << endl; // 1
+
+	// cout << grid_map_int.rowRange(final_y, init_y) << endl;
+
+	int erodeSize = 1;
+
+	grid_map_int.convertTo(img_first, CV_16SC1);
+
+	cv::Mat element = cv::getStructuringElement( cv::MORPH_RECT,
+								cv::Size( 2*erodeSize + 1, 2*erodeSize+1 ),
+								cv::Point( erodeSize, erodeSize ) );
+
+	cv::erode(img_first, img_final, element);
 
 	////////////////////////////////////
     vector<geometry_msgs::Point> path; // Store path history
@@ -493,7 +500,7 @@ vector<geometry_msgs::Point>  BFS(int init_x, int init_y, int final_x, int final
 			int col = pt.x + rowNum[i]; 
 			int row = pt.y + colNum[i]; 
 
-			int probability = (int)grid_map_int.at<char>(row, col);
+			int probability = (int)img_final.at<short>(row, col);
 			if (isValid(row, col) 
 				&& probability < MAX_OCCUPIED_PROB 
 				&& probability >= 0 
@@ -535,7 +542,8 @@ void printPointPath(vector<geometry_msgs::Point>& path)
 
     for (int i = 0; i < size; i++)  {
 		cout << path[i].x << "," << path[i].y;    
-		int probability = (int)grid_map_int.at<char>(path[i].y, path[i].x );
+		// int probability = (int)grid_map_int.at<char>(path[i].y, path[i].x );
+		int probability = (int)img_final.at<short>(path[i].y, path[i].x);
 
 		cout << " occ%: " << probability <<  endl;    
 	}
@@ -1208,7 +1216,7 @@ void showGridMap(unsigned int id) {
 		grid_map_thresh_resized.convertTo(grid_map_rgb, grid_map_rgb.type());
 		cv::circle(grid_map_rgb, cv::Point(kf_pos_grid_x*resize_factor, kf_pos_grid_z*resize_factor),
 			cam_radius, CV_RGB(255, 0, 0));
-		cv::imshow("grid_map_thresh_resized", grid_map_rgb);
+		cv::imshow("grid_map_thresh_resized_rgb", grid_map_rgb);
 	}
 	else {
 		cv::imshow("grid_map_thresh_resized", grid_map_thresh_resized);
